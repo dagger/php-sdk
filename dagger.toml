@@ -1,0 +1,14 @@
+# Dagger workspace configuration
+# Install modules with: dagger install <module>
+# Example:
+#   dagger install github.com/dagger/dagger/modules/wolfi
+
+# Marker filename that skips generate when found at or above a PHP SDK module root.
+# settings.skipGenerateFilename = ""
+
+[modules.php-sdk]
+source = "."
+check.skip = ["*"]
+
+[modules.php-sdk.as-sdk]
+name = "php"

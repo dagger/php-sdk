@@ -1,0 +1,14 @@
+{
+  "name": "php-sdk",
+  "engineVersion": "v1.0.0-0",
+  "sdk": {
+    "source": "dang"
+  },
+  "dependencies": [
+    {
+      "name": "polyfill",
+      "source": "github.com/dagger/sdk-sdk/polyfill@main",
+      "pin": "90ecbe40419359f01cef02a495e0d568648c92fb"
+    }
+  ]
+}

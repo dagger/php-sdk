@@ -1,0 +1,189 @@
+"""
+Manage Dagger modules that use the PHP SDK.
+"""
+type PhpSdk {
+  """
+  Marker filename that skips generate when found at or above a PHP SDK module root.
+  """
+  pub skipGenerateFilename: String! = ".dagger-php-sdk-skip-generate"
+
+  """
+  Runtime source to write into modules created by this SDK.
+  """
+  pub targetRuntime: String! { "php" }
+
+  """
+  Return every legacy dagger.json Dagger module whose sdk.source is "php".
+
+  This discovery path is obsolete for workspace-managed modules; the engine
+  owns the modules.<sdk>.as-sdk.modules source of truth.
+  """
+  pub modules(ws: Workspace!): [Mod!]! {
+    ws
+      .directory("/", include: ["**/dagger.json"])
+      .search(
+        pattern: "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"php\"",
+        globs: ["**/dagger.json"],
+        filesOnly: true,
+        multiline: true,
+        dotall: true,
+      )
+      .{{filePath}}
+      .map { configPath =>
+        mod(
+          ws,
+          if (configPath.filePath == "dagger.json") { "." } else { configPath.filePath.trimSuffix("/dagger.json") },
+          findUp: false,
+        )
+      }
+  }
+
+  """
+  Return init templates tracked by this module.
+
+  Templates live under templates/<name> and are materialized into the new
+  module before generation. Passing an empty template to init uses the module
+  default.
+  """
+  pub templates: [Template!]! {
+    if (currentModule.source.exists("templates")) {
+      let root = currentModule.source.directory("templates")
+      root.entries.map { name =>
+        Template(
+          name: name.trimSuffix("/"),
+          source: root.directory(name),
+        )
+      }
+    } else {
+      directory.entries.map { name =>
+        Template(
+          name: name,
+          source: directory,
+        )
+      }
+    }
+  }
+
+  """
+  Return the PHP SDK module at or above a workspace path.
+
+  When `findUp` is true, `path` may point inside the module.
+  """
+  pub mod(ws: Workspace!, path: String! = ".", findUp: Boolean! = true): Mod! {
+    let modPath = if (findUp) {
+      let foundConfigPath = ws.findUp("dagger.json", path)
+      if (foundConfigPath == null) {
+        raise "no Dagger module found containing path: " + path
+      } else {
+        let configPath = foundConfigPath.trimPrefix("/")
+        if (
+          ws
+            .directory("/", include: [configPath])
+            .file(configPath)
+            .search(
+              pattern: "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"php\"",
+              multiline: true,
+              dotall: true,
+              limit: 1,
+            )
+            .{{id}}
+            .length == 0
+        ) {
+          raise "Dagger module does not use the PHP SDK: " + path
+        } else if (configPath == "dagger.json") {
+          "."
+        } else {
+          configPath.trimSuffix("/dagger.json")
+        }
+      }
+    } else {
+      path.trimPrefix("/")
+    }
+
+    Mod(
+      path: modPath,
+      ws: ws,
+      skipGenerateFilename: skipGenerateFilename,
+    )
+  }
+
+  """
+  Initialize PHP-owned files for a new Dagger module.
+
+  Returns a Changeset with only the SDK-owned template files layered onto the
+  new module's `path`. Engine-owned files (dagger-module.toml, workspace config
+  updates) are produced by the engine and merged with this changeset.
+
+  Pass `template` to materialize files from templates/<template>. The empty
+  default uses this module's minimal template.
+  """
+  pub initModule(ws: Workspace!, name: String!, path: String!, template: String! = ""): Changeset! {
+    let rawPath = path.trimPrefix("./").trimPrefix("/")
+
+    let modPath = if (rawPath == "" or rawPath == ".") {
+      "."
+    } else if (rawPath == ".." or rawPath.trimPrefix("../") != rawPath) {
+      raise "path escapes workspace: " + rawPath
+    } else {
+      rawPath.trimSuffix("/")
+    }
+
+    let selectedTemplate = if (template == "") { "minimal" } else { template }
+
+    if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
+      raise "unknown init template: " + template
+    } else {
+      polyfill.workspace(ws).fork
+        .withDirectory(modPath, renderedTemplate(name, selectedTemplate))
+        .changes
+    }
+  }
+
+  """
+  Generate a typed PHP client for `module` at `path`.
+
+  The engine records the managed client in workspace config before calling
+  this function. The engine owns materializing the generated client files.
+  """
+  pub initClient(ws: Workspace!, path: String!, module: String!, dev: Boolean! = false): Changeset! {
+    polyfill.workspace(ws).fork.changes
+  }
+
+  """
+  Render a PHP template with the requested module name.
+  """
+  let renderedTemplate(name: String!, templateName: String!): Directory! {
+    container
+      .from("golang:1.25-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
+      .withDirectory("/template", currentModule.source.directory("templates/" + templateName))
+      .withWorkdir("/helper")
+      .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
+      .withExec(["render-template", name, "/template", "/rendered"])
+      .directory("/rendered")
+  }
+
+  """
+  Generate all discovered legacy dagger.json PHP SDK modules.
+
+  This discovery path is obsolete for workspace-managed modules; the engine
+  owns the modules.<sdk>.as-sdk.modules source of truth.
+
+  Modules with the generate skip marker are skipped.
+  """
+  pub generateAll(ws: Workspace!): Changeset! @generate {
+    let pws = polyfill.workspace(ws)
+
+    currentModule.asSDK.modules
+      .{{path}}
+      .map { m => Mod(path: m.path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
+      .filter { mod => mod.skipGenerate == false }
+      .reduce(pws.fork) { fork, mod =>
+        fork.merge(pws.moduleSource("/" + mod.path).generate)
+      }
+      .changes
+  }
+}
