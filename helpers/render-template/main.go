@@ -67,12 +67,18 @@ func run(args []string) error {
 			return err
 		}
 
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Perm()
+
 		contents, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
 		if !strings.HasSuffix(rel, ".tmpl") {
-			return os.WriteFile(dst, contents, 0o644)
+			return os.WriteFile(dst, contents, mode)
 		}
 
 		var buf bytes.Buffer
@@ -83,6 +89,6 @@ func run(args []string) error {
 		if err := tmpl.Execute(&buf, data); err != nil {
 			return err
 		}
-		return os.WriteFile(dst, buf.Bytes(), 0o644)
+		return os.WriteFile(dst, buf.Bytes(), mode)
 	})
 }
