@@ -3,9 +3,10 @@ A Dagger module that uses the PHP SDK.
 """
 type Mod {
   """
-  Workspace-relative path of this module root.
+  Workspace-root-relative path of this module root. This stable identity is
+  independent of the client's cwd.
   """
-  pub path: String!
+  pub rootPath: String!
 
   """
   The workspace this module belongs to.
@@ -18,10 +19,29 @@ type Mod {
   let skipGenerateFilename: String!
 
   """
+  Module root relative to the client's cwd.
+  """
+  pub path: String! {
+    let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
+    if (rootPath == cwd) {
+      "."
+    } else if (cwd == "") {
+      rootPath
+    } else if (rootPath.trimPrefix(cwd + "/") != rootPath) {
+      rootPath.trimPrefix(cwd + "/")
+    } else if (rootPath == "." or cwd.trimPrefix(rootPath + "/") != cwd) {
+      let depth = if (rootPath == ".") { 0 } else { rootPath.split("/").length }
+      cwd.split("/").dropFirst(depth).map { segment => ".." }.join("/")
+    } else {
+      rootPath
+    }
+  }
+
+  """
   Whether this module or an ancestor contains the configured generate skip marker.
   """
   pub skipGenerate: Boolean! {
-    ws.findUp(name: skipGenerateFilename, from: path) != null
+    ws.findUp(name: skipGenerateFilename, from: rootPath) != null
   }
 
   """
@@ -32,7 +52,9 @@ type Mod {
     if (skipGenerate) {
       polyfill.workspace(ws).fork.changes
     } else {
-      polyfill.workspace(ws).moduleSource("/" + path).generate.changes
+      # rootPath is workspace-root-relative, so anchor it before passing it
+      # through the cwd-aware polyfill.
+      polyfill.workspace(ws).moduleSource("/" + rootPath).generate.changes
     }
   }
 }

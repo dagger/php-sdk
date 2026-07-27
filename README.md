@@ -15,7 +15,7 @@ PHP codegen) still lives in
 [`github.com/dagger/dagger/sdk/php`](https://github.com/dagger/dagger/tree/main/sdk/php);
 this module wraps the init/scaffolding ergonomics on top of it.
 
-Backed by [`github.com/dagger/sdk-sdk/polyfill`](https://github.com/dagger/sdk-sdk/tree/main/polyfill).
+Backed by [`github.com/dagger/polyfill`](https://github.com/dagger/polyfill).
 
 ## Install
 
@@ -60,8 +60,8 @@ For a single module:
 dagger call php-sdk mod --path my-module generate
 ```
 
-For every PHP SDK module in the workspace (skipping any with a
-`.dagger-php-sdk-skip-generate` marker at or above the module root):
+For every managed PHP SDK module visible from your current directory (skipping
+any with a `.dagger-php-sdk-skip-generate` marker at or above the module root):
 
 ```sh
 dagger call php-sdk generate-all
@@ -70,15 +70,14 @@ dagger call php-sdk generate-all
 ## Discover modules in a workspace
 
 ```sh
-# Every PHP SDK module under the workspace
-dagger call php-sdk modules path
+# Managed PHP SDK modules visible from the current directory
+dagger call php-sdk modules root-path path
 ```
 
-> [!NOTE]
-> `modules` and `generate-all` discover modules by scanning legacy
-> `dagger.json` files for `sdk.source == "php"`. This is obsolete for
-> workspace-managed modules, where the engine owns the
-> `modules.<sdk>.as-sdk.modules` source of truth.
+Discovery supports both CLI 1.0 `dagger-module.toml` and legacy `dagger.json`.
+It returns the nearest enclosing managed module plus managed modules beneath
+the current directory. `rootPath` is the stable workspace-root-relative
+identity; `path` is relative to the caller's current directory.
 
 See [`php-sdk.dang`](./php-sdk.dang) for the full type surface.
 
