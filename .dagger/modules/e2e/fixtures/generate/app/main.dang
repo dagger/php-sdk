@@ -1,0 +1,4 @@
+"""Path-resolution fixture used by the PHP SDK helper checks."""
+type GenerateApp {
+  pub ok: Boolean! { true }
+}
