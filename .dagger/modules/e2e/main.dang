@@ -10,6 +10,7 @@ type E2e {
   let mixedModulePath: String! = fixtureRoot + "/mixed-discovery/ancestor/work/app"
   let mixedNestedPath: String! = mixedModulePath + "/nested/deeper"
   let generateModulePath: String! = fixtureRoot + "/generate/app"
+  let layeringModulePath: String! = fixtureRoot + "/layering/app"
 
   let assert(condition: Boolean!, message: String!): Void {
     if (condition == false) { raise message }
@@ -36,14 +37,13 @@ type E2e {
   }
 
   """
-  Managed discovery is cwd-aware, resolves against the passed workspace, and
-  supports both legacy and CLI 1.0 configs.
+  Module selection is cwd-aware and resolves against the passed workspace.
   """
   pub moduleDiscoveryCheck(ws: Workspace!): Void @check {
     let roots = phpSdk.modules(ws).{{rootPath}}.map { mod => mod.rootPath }
-    assert(contains(roots, lookupModulePath), "root discovery missed a legacy PHP module")
-    assert(contains(roots, tomlModulePath), "root discovery missed a TOML PHP module")
-    assert(contains(roots, nonPhpModulePath) == false, "discovery included a non-PHP module")
+    assert(contains(roots, lookupModulePath), "root scope missed the module registered with a legacy dagger.json")
+    assert(contains(roots, tomlModulePath), "root scope missed the module registered with a dagger-module.toml")
+    assert(contains(roots, nonPhpModulePath) == false, "scope included a module this SDK does not manage")
 
     # Keep dagger.toml in this full snapshot: asSDK(workspace:) reads the
     # managed-module list from the workspace it is explicitly passed.
@@ -54,12 +54,31 @@ type E2e {
     assert(contains(scoped.map { mod => mod.path }, ".."), "nested module path should be cwd-relative")
 
     # Reverse the config ordering: the farther config is TOML and the nearest
-    # managed config is JSON. The polyfill must still choose the nearest root.
+    # managed config is JSON. Registration, not config filename, decides what
+    # the cwd scope selects.
     let mixedWs = ws.directory("/").asWorkspace(cwd: mixedNestedPath)
     let mixed = phpSdk.modules(mixedWs).{{rootPath, path}}
     assert(mixed.length == 1, "mixed-config cwd should see only its nearest managed module")
-    assert(contains(mixed.map { mod => mod.rootPath }, mixedModulePath), "mixed discovery chose the farther TOML config")
+    assert(contains(mixed.map { mod => mod.rootPath }, mixedModulePath), "mixed-config cwd resolved the wrong root")
     assert(contains(mixed.map { mod => mod.path }, "../.."), "mixed module path should be cwd-relative")
+    null
+  }
+
+  """
+  init layers onto the target directory instead of replacing it.
+
+  `Workspace.withNewDirectory` writes a fresh directory rather than merging
+  into the existing one, so seeding a module into a path that already holds
+  files has to combine the two by hand or it deletes them. sdk-sdk's
+  `contract:does-not-remove-existing-files` only ever inits into an empty path,
+  so it cannot see this.
+  """
+  pub initLayeringCheck(ws: Workspace!): Void @check {
+    let removed = phpSdk
+      .initModule(ws, name: "layering", path: layeringModulePath)
+      .removedPaths
+
+    assert(removed.length == 0, "init removed files that already existed in the target directory")
     null
   }
 

@@ -22,40 +22,19 @@ type PhpSdk {
   pub targetRuntime: String! { "php" }
 
   """
-  Return every managed PHP SDK module visible from the client's cwd: the
-  nearest enclosing module plus modules at or below the cwd. Filesystem
-  discovery is intersected with the SDK list on the passed workspace.
+  Return every managed PHP SDK module visible from the client's cwd: every
+  module at or below the cwd, plus the nearest enclosing module when the cwd
+  itself is not managed.
+
+  The engine owns both the managed list and the cwd policy, so the SDK does no
+  filesystem discovery of its own. Paths come back workspace-root-relative, the
+  currency Mod.rootPath uses.
   """
   pub modules(ws: Workspace!): [Mod!]! {
-    # Resolve the managed list against the workspace supplied by the caller.
-    # Module dependencies no longer inherit an ambient current workspace.
-    let managed = currentModule.asSDK(workspace: ws).modules.{{path}}
-    let cwd = normalizePath(ws.cwd)
-    polyfill.workspace(ws)
-      .findConfigDirs(moduleConfigFilenames, exclude: ["**/vendor/**"])
-      .map { dir => workspacePath(cwd, dir) }
-      .uniq
-      .filter { path =>
-        managed.filter { module => normalizePath(module.path) == path }.length > 0
-      }
-      .map { path => Mod(rootPath: path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
-  }
-
-  """
-  Resolve a cwd-relative discovery result to a workspace-root-relative path.
-  """
-  let workspacePath(cwd: String!, path: String!): String! {
-    let base = if (cwd == ".") { [] } else { cwd.split("/") }
-    let segments = path.split("/").reduce(base) { acc, segment =>
-      if (segment == "..") {
-        acc.dropLast(1)
-      } else if (segment == "." or segment == "") {
-        acc
-      } else {
-        acc + [segment]
-      }
-    }
-    if (segments.length == 0) { "." } else { segments.join("/") }
+    currentModule
+      .asSDK(workspace: ws)
+      .modules.{{path}}
+      .map { module => Mod(rootPath: module.path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
   }
 
   let normalizePath(path: String!): String! {
@@ -183,9 +162,18 @@ type PhpSdk {
     if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
       raise "unknown init template: " + template
     } else {
-      polyfill.workspace(ws).fork
-        .withDirectory(modPath, renderedTemplate(name, selectedTemplate))
-        .changes
+      # modPath is workspace-root-relative: a relative path resolves from
+      # ws.cwd and would be prefixed a second time on a direct call from a
+      # subdirectory.
+      let target = if (modPath == ".") { "/" } else { "/" + modPath }
+
+      # withNewDirectory writes a fresh directory rather than merging into the
+      # one already there, so layer the template onto the existing contents:
+      # init must never remove a user's files.
+      ws.withNewDirectory(
+        target,
+        existingDir(ws, modPath).withDirectory(".", renderedTemplate(name, selectedTemplate)),
+      ).changes(ws)
     }
   }
 
@@ -196,7 +184,19 @@ type PhpSdk {
   this function. The engine owns materializing the generated client files.
   """
   pub initClient(ws: Workspace!, path: String!, module: String!, dev: Boolean! = false): Changeset! {
-    polyfill.workspace(ws).fork.changes
+    changeset
+  }
+
+  """
+  Existing contents of a workspace directory, empty when it does not exist yet.
+  """
+  let existingDir(ws: Workspace!, path: String!): Directory! {
+    if (path == ".") {
+      ws.directory("/")
+    } else {
+      let filtered = ws.directory("/", include: [path + "/**"])
+      if (filtered.exists(path)) { filtered.directory(path) } else { directory }
+    }
   }
 
   """
@@ -222,13 +222,10 @@ type PhpSdk {
   Modules with the generate skip marker are skipped.
   """
   pub generateAll(ws: Workspace!): Changeset! @generate {
-    let pws = polyfill.workspace(ws)
-
-    modules(ws)
-      .filter { mod => mod.skipGenerate == false }
-      .reduce(pws.fork) { fork, mod =>
-        fork.merge(pws.moduleSource("/" + mod.rootPath).generate)
-      }
-      .changes
+    changeset.withChangesets(
+      modules(ws)
+        .filter { mod => mod.skipGenerate == false }
+        .map { mod => mod.generate },
+    )
   }
 }
