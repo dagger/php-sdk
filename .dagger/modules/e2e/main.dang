@@ -11,6 +11,7 @@ type E2e {
   let mixedNestedPath: String! = mixedModulePath + "/nested/deeper"
   let generateModulePath: String! = fixtureRoot + "/generate/app"
   let layeringModulePath: String! = fixtureRoot + "/layering/app"
+  let rootingModulePath: String! = fixtureRoot + "/rooting/app"
 
   let assert(condition: Boolean!, message: String!): Void {
     if (condition == false) { raise message }
@@ -99,6 +100,28 @@ type E2e {
     # lightweight Dang runtime: this regression concerns module-source path
     # resolution before language-specific codegen starts.
     assert(fromParent.isEmpty == fromModule.isEmpty, "generation resolved different modules from different cwds")
+    null
+  }
+
+  """
+  A generated changeset is rooted at the caller's cwd, not at the workspace
+  root.
+
+  This needs a module whose codegen actually emits files, so it runs the PHP
+  runtime rather than the lightweight Dang fixtures the other checks use. A
+  changeset built straight from ModuleSource.generatedContextChangeset is
+  measured from the module source's context directory instead, which lands the
+  generated client one module path deeper than it belongs.
+  """
+  pub generateRootingCheck(ws: Workspace!): Void @check {
+    let modWs = ws.directory("/").asWorkspace(cwd: rootingModulePath)
+    let added = phpSdk.generateAll(modWs).addedPaths
+
+    assert(added.length > 0, "generating a PHP module should add files")
+    assert(
+      added.filter { path => path.trimPrefix(fixtureRoot) != path }.length == 0,
+      "generated paths must be relative to the caller's cwd, not the workspace root",
+    )
     null
   }
 }

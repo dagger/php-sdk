@@ -23,6 +23,9 @@ name = "php"
 path = ".dagger/modules/e2e/fixtures/generate/app"
 
 [[modules.php-sdk.as-sdk.modules]]
+path = ".dagger/modules/e2e/fixtures/rooting/app"
+
+[[modules.php-sdk.as-sdk.modules]]
 path = ".dagger/modules/e2e/fixtures/lookup/app"
 
 [[modules.php-sdk.as-sdk.modules]]
