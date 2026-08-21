@@ -1,3 +1,2 @@
 [["version","2"]]
-["","container.from",["docker.io/library/golang:1.25-alpine","linux/amd64"],"sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59"]
-["","git.ref",["https://github.com/dagger/sdk-sdk","HEAD"],{"sha":"e1747f4b6221fa24da080701e027243e0cc5fa33"}]
+["","git.ref",["https://github.com/dagger/sdk-sdk","HEAD"],{"ref":"refs/heads/main","sha":"334448911a8292fba0d677e5f31926c79ad80ad3"}]
