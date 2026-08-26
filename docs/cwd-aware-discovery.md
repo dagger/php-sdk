@@ -1,15 +1,13 @@
 # CWD-aware module discovery
 
-The PHP SDK delegates config discovery to
-[`github.com/dagger/polyfill`](https://github.com/dagger/polyfill), then
-intersects the discovered directories with the PHP SDK modules registered on
-the `Workspace` passed to `modules`.
+The PHP SDK asks `currentModule.asSDK(workspace: ws).modules` for the modules
+registered to it that are relevant to the caller's current directory. The engine
+owns both membership and scope selection, so the SDK neither scans config files
+nor reconstructs the cwd policy.
 
-Discovery returns managed modules at or below the client's current directory
-and, when the current directory has no module config, its nearest enclosing
-managed module. Both `dagger-module.toml` and legacy `dagger.json` participate
-in discovery, so the nearest config wins regardless of filename. Composer
-`vendor` directories are excluded.
+Selection returns managed modules at or below the client's current directory
+and, when the current directory itself is not registered, its nearest enclosing
+managed module.
 
 Each `Mod` exposes two coordinates:
 
@@ -19,3 +17,7 @@ Each `Mod` exposes two coordinates:
 Generation anchors `rootPath` at `/` before resolving the module source. This
 keeps generation correct when invoked from a module root or another nested
 directory.
+
+`mod` is the separate, path-driven lookup: it walks up from an arbitrary
+workspace path to the nearest module config, so it does read `dagger.json` and
+`dagger-module.toml` and does not require the module to be registered.
