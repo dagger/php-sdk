@@ -66,20 +66,19 @@ type E2e {
   }
 
   """
-  init layers onto the target directory instead of replacing it.
+  init layers onto a target directory that already holds files.
 
-  `Workspace.withNewDirectory` writes a fresh directory rather than merging
-  into the existing one, so seeding a module into a path that already holds
-  files has to combine the two by hand or it deletes them. sdk-sdk's
-  `contract:does-not-remove-existing-files` only ever inits into an empty path,
-  so it cannot see this.
+  sdk-sdk's `contract:does-not-remove-existing-files` only ever inits into an
+  empty path, so it cannot see a non-empty target losing its contents.
   """
   pub initLayeringCheck(ws: Workspace!): Void @check {
-    let removed = phpSdk
-      .initModule(ws, name: "layering", path: layeringModulePath)
-      .removedPaths
+    let changes = phpSdk.initModule(ws, name: "layering", path: layeringModulePath)
 
-    assert(removed.length == 0, "init removed files that already existed in the target directory")
+    assert(changes.removedPaths.length == 0, "init removed files that already existed in the target directory")
+    assert(
+      contains(changes.addedPaths, layeringModulePath + "/composer.json"),
+      "init did not seed the template into the target directory",
+    )
     null
   }
 
