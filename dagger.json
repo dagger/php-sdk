@@ -1,6 +1,6 @@
 {
   "name": "php-sdk",
-  "engineVersion": "v1.0.0-beta.11",
+  "engineVersion": "v1.0.0-beta.12",
   "sdk": {
     "source": "dang"
   }
