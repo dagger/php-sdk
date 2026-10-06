@@ -7,9 +7,9 @@ modules like this one. The engine drives the SDK: it records a module scope in
 `dagger.toml`, sets the workspace cwd to it, and asks this module to generate
 the scope through `findClientRoot` and `generateScope`. This module writes the
 template files, the module's `dagger-module.toml` and the generated SDK files;
-the engine owns the workspace bookkeeping. Shared, language-agnostic operations
-— editing a module's dependencies or its required engine version — are owned by
-the core CLI and are not part of this module's surface.
+the engine owns the workspace bookkeeping. Dependencies between modules are
+module clients, which this SDK does not generate yet; see
+[Module clients](#module-clients).
 
 The PHP module runtime (the container that runs PHP modules and the GraphQL ->
 PHP codegen) still lives in
@@ -72,13 +72,16 @@ directory.
 
 See [`php-sdk.dang`](./php-sdk.dang) for the full type surface.
 
-## Module scopes
+## Client roots
 
-A PHP scope is a directory with a `composer.json`. `findClientRoot` answers with
-the nearest one at or above your current directory, which is how
+`findClientRoot` detects the PHP client root containing your current directory:
+the nearest `composer.json` at or above it. This is how
 `dagger module client add` finds the module you are standing in. The SDK
 vendored under a module's `sdk/` has a `composer.json` of its own; from there
 the module that owns it answers.
+
+Detection records nothing. The scopes `dagger generate` regenerates are the ones
+recorded in `dagger.toml` under `[sdks.php.scopes."<path>"]`.
 
 ## Module clients
 
