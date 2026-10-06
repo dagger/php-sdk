@@ -12,21 +12,3 @@ source = ".dagger/modules/e2e"
 [modules.php-sdk]
 source = "."
 check.skip = ["*"]
-
-[modules.php-sdk.as-sdk]
-name = "php"
-
-[[modules.php-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/generate/app"
-
-[[modules.php-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/rooting/app"
-
-[[modules.php-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/lookup/app"
-
-[[modules.php-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/toml/app"
-
-[[modules.php-sdk.as-sdk.modules]]
-path = ".dagger/modules/e2e/fixtures/mixed-discovery/ancestor/work/app"
