@@ -13,9 +13,6 @@ source = ".dagger/modules/e2e"
 source = "."
 check.skip = ["*"]
 
-[modules.sdk-sdk]
-source = "github.com/dagger/sdk-sdk"
-
 [modules.php-sdk.as-sdk]
 name = "php"
 
