@@ -100,6 +100,12 @@ dagger ws migrate
 dagger generate
 ```
 
+A workspace that installed php-sdk from a local path needs engine
+v1.0.0-beta.13 or later to migrate, because v1.0.0-beta.12 hits an engine bug
+fixed in dagger/dagger
+[`26a952eafb`](https://github.com/dagger/dagger/commit/26a952eafbf3a413ef7bf6960923af7f316b9dc1);
+one that installed `github.com/dagger/php-sdk` migrates on v1.0.0-beta.12.
+
 ## Skipping generation
 
 To exclude a directory tree from generation, drop an empty
