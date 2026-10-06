@@ -1,3 +1,4 @@
+name = "client-root-app"
 engineVersion = "v1.0.0-0"
 
 [runtime]
