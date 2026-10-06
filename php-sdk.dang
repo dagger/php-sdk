@@ -82,7 +82,7 @@ type PhpSdk {
   """
   let moduleManifest(name: String!): String! {
     let engineVersion = version.split("+")[0] ?? version
-    "name = \"" + name + "\"\n"
+    TOML.encode({{name: name}}) + "\n"
       + "engineVersion = \"" + engineVersion + "\"\n"
       + "\n"
       + "[runtime]\n"
