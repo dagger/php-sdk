@@ -55,14 +55,7 @@ type Mod {
       # rootPath is workspace-root-relative: Workspace.moduleSource resolves a
       # relative path from ws.cwd and would prefix it a second time.
       let ref = if (rootPath == ".") { "/" } else { "/" + rootPath }
-
-      # Stage the local dependency closure so this module's codegen sees
-      # up-to-date dependency bindings. The staged workspace is only an input:
-      # the engine diffs the generated context against the same base it
-      # generated from, so the dependencies' codegen does not ride along.
-      let stagedWs = ws.withChanges(ws.moduleSource(ref).generateLocalDependencies(ws))
-
-      atCwd(stagedWs.moduleSource(ref).generatedContextChangeset)
+      atCwd(ws.moduleSource(ref).generatedContextChangeset)
     }
   }
 

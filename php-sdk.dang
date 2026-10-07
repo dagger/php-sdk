@@ -17,24 +17,86 @@ type PhpSdk {
   pub skipGenerateFilename: String! = ".dagger-php-sdk-skip-generate"
 
   """
-  Runtime source to write into modules created by this SDK.
+  Starter template under templates/<template> for a new module.
   """
-  pub targetRuntime: String! { "php" }
+  pub template: String! = "minimal"
 
   """
-  Return every managed PHP SDK module visible from the client's cwd: every
-  module at or below the cwd, plus the nearest enclosing module when the cwd
-  itself is not managed.
-
-  The engine owns both the managed list and the cwd policy, so the SDK does no
-  filesystem discovery of its own. Paths come back workspace-root-relative, the
-  currency Mod.rootPath uses.
+  Find the PHP client root containing the workspace cwd: the directory of the
+  nearest composer.json, relative to the workspace root. A module's vendored
+  SDK carries its own composer.json under sdk/, so the module owning it answers
+  instead. Null when there is none.
   """
-  pub modules(ws: Workspace!): [Mod!]! {
-    currentModule
-      .asSDK(workspace: ws)
-      .modules.{{path}}
-      .map { module => Mod(rootPath: module.path, ws: ws, skipGenerateFilename: skipGenerateFilename) }
+  pub findClientRoot(ws: Workspace!): String {
+    let found = ws.findUp("composer.json")
+    if (found == null) {
+      null
+    } else {
+      let root = normalizePath(found.trimSuffix("composer.json"))
+      let vendorParent = if (root == "sdk") { "." } else { root.trimSuffix("/sdk") }
+      if (vendorParent != root and hasModuleConfig(ws, vendorParent)) {
+        vendorParent
+      } else {
+        root
+      }
+    }
+  }
+
+  """
+  Generate one SDK scope: the module at the workspace cwd, when the scope is a
+  module. A scope without a module config is first seeded from the `template`
+  setting, keeping the files already there, and given a dagger-module.toml.
+  Module clients are not generated yet.
+  """
+  pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
+    if (clients.length > 0) {
+      raise "php-sdk does not generate module clients yet"
+    }
+
+    if (isModule == false) {
+      ws
+    } else {
+      let scope = normalizePath(ws.cwd)
+      # Mod.rootPath is workspace-root-relative, so the scope is generated from
+      # the root and the cwd restored afterwards: the engine rejects a result
+      # whose cwd is not the scope.
+      let rooted = ws.withWorkdir(".")
+      let selectedTemplate = if (template == "") { "minimal" } else { template }
+      let initialized = if (hasModuleConfig(ws, scope)) {
+        rooted
+      } else if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
+        raise "unknown init template: " + template
+      } else {
+        rooted
+          .withDirectory(scope, renderedTemplate(name, selectedTemplate))
+          .withNewFile(scope + "/dagger-module.toml", moduleManifest(name))
+      }
+      let module = Mod(rootPath: scope, ws: initialized, skipGenerateFilename: skipGenerateFilename)
+      initialized.withChanges(module.generate).withWorkdir(scope)
+    }
+  }
+
+  """
+  The dagger-module.toml of a new module, as the engine wrote it before SDKs
+  owned the manifest.
+  """
+  let moduleManifest(name: String!): String! {
+    let engineVersion = version.split("+")[0] ?? version
+    TOML.encode({{name: name}}) + "\n"
+      + "engineVersion = \"" + engineVersion + "\"\n"
+      + "\n"
+      + "[runtime]\n"
+      + "  source = \"php\"\n"
+  }
+
+  """
+  Whether a module config exists in a workspace-root-relative directory.
+  """
+  let hasModuleConfig(ws: Workspace!, dir: String!): Boolean! {
+    moduleConfigFilenames.filter { filename =>
+      let path = if (dir == ".") { filename } else { dir + "/" + filename }
+      ws.directory("/", include: [path]).exists(path)
+    }.length > 0
   }
 
   let normalizePath(path: String!): String! {
@@ -45,8 +107,8 @@ type PhpSdk {
   """
   Return init templates tracked by this module.
 
-  Templates live under templates/<name> and are materialized into the new
-  module before generation. Passing an empty template to init uses the module
+  Templates live under templates/<name> and are materialized into a new module
+  before generation. The `template` setting selects one; empty selects the
   default.
   """
   pub templates: [Template!]! {
@@ -137,52 +199,6 @@ type PhpSdk {
   }
 
   """
-  Initialize PHP-owned files for a new Dagger module.
-
-  Returns a Changeset with only the SDK-owned template files layered onto the
-  new module's `path`. Engine-owned files (dagger-module.toml, workspace config
-  updates) are produced by the engine and merged with this changeset.
-
-  Pass `template` to materialize files from templates/<template>. The empty
-  default uses this module's minimal template.
-  """
-  pub initModule(ws: Workspace!, name: String!, path: String!, template: String! = ""): Changeset! {
-    let rawPath = path.trimPrefix("./").trimPrefix("/")
-
-    let modPath = if (rawPath == "" or rawPath == ".") {
-      "."
-    } else if (rawPath == ".." or rawPath.trimPrefix("../") != rawPath) {
-      raise "path escapes workspace: " + rawPath
-    } else {
-      rawPath.trimSuffix("/")
-    }
-
-    let selectedTemplate = if (template == "") { "minimal" } else { template }
-
-    if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
-      raise "unknown init template: " + template
-    } else {
-      # modPath is workspace-root-relative: a relative path resolves from
-      # ws.cwd and would be prefixed a second time on a direct call from a
-      # subdirectory.
-      let target = if (modPath == ".") { "/" } else { "/" + modPath }
-
-      # Init must never remove files a user already keeps at the module path.
-      ws.withDirectory(target, renderedTemplate(name, selectedTemplate)).changes(ws)
-    }
-  }
-
-  """
-  Generate a typed PHP client for `module` at `path`.
-
-  The engine records the managed client in workspace config before calling
-  this function. The engine owns materializing the generated client files.
-  """
-  pub initClient(ws: Workspace!, path: String!, module: String!, dev: Boolean! = false): Changeset! {
-    changeset
-  }
-
-  """
   Render a PHP template with the requested module name.
   """
   let renderedTemplate(name: String!, templateName: String!): Directory! {
@@ -197,18 +213,5 @@ type PhpSdk {
       .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
       .withExec(["render-template", name, "/template", "/rendered"])
       .directory("/rendered")
-  }
-
-  """
-  Generate every managed PHP SDK module visible from the client's cwd.
-
-  Modules with the generate skip marker are skipped.
-  """
-  pub generateAll(ws: Workspace!): Changeset! @generate {
-    changeset.withChangesets(
-      modules(ws)
-        .filter { mod => mod.skipGenerate == false }
-        .map { mod => mod.generate },
-    )
   }
 }
