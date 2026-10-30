@@ -80,8 +80,8 @@ type E2e {
       "generateScope did not write the module manifest",
     )
     assert(
-      generated.file("dagger-module.toml").contents.contains("+") == false,
-      "the module manifest should record the engine version without build metadata",
+      generated.file("dagger-module.toml").contents.contains("engineVersion = \"v1.0.0-beta.21\"\n"),
+      "the module manifest should declare v1.0.0-beta.21, before the beta.22 API cut",
     )
     null
   }

@@ -77,13 +77,22 @@ type PhpSdk {
   }
 
   """
+  The engine API version a new module declares. It stays before
+  v1.0.0-beta.22, which renames core API fields and changes module naming,
+  until the PHP codegen is ported to those rules: declaring the running engine
+  would put new modules past that cut as soon as engines reach it. Every
+  v1.0.0 prerelease up to beta.21 shares one API view, and released engines
+  compare base versions, so beta.12 and later engines load it alike.
+  """
+  let targetEngineVersion: String! = "v1.0.0-beta.21"
+
+  """
   The dagger-module.toml of a new module, as the engine wrote it before SDKs
-  owned the manifest.
+  owned the manifest, at targetEngineVersion.
   """
   let moduleManifest(name: String!): String! {
-    let engineVersion = version.split("+")[0] ?? version
     TOML.encode({{name: name}}) + "\n"
-      + "engineVersion = \"" + engineVersion + "\"\n"
+      + "engineVersion = \"" + targetEngineVersion + "\"\n"
       + "\n"
       + "[runtime]\n"
       + "  source = \"php\"\n"
