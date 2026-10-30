@@ -1,3 +1,5 @@
 [["version","2"]]
+["","git-latest",["github.com/dagger/sdk-helpers",["version","v1.0.7"]],"refs/tags/v1.0.7"]
+["","git-sha",["github.com/dagger/sdk-helpers","refs/tags/v1.0.7"],"41fd4d3062d75a836429c6db5c42b4c6c9178ca4"]
 ["","git-sha",["https://github.com/dagger/dagger","refs/tags/v1.0.0-beta.11"],"a4e1e4ff663e5e51c2b96c2c0772f3d2f00cfb94"]
 ["","oci-sha",["docker.io/library/golang:1.25-alpine"],"sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59"]
