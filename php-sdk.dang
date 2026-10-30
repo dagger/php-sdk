@@ -67,9 +67,15 @@ type PhpSdk {
       } else if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
         raise "unknown init template: " + template
       } else {
-        rooted
-          .withDirectory(scope, renderedTemplate(name, selectedTemplate))
-          .withNewFile(scope + "/dagger-module.toml", moduleManifest(name))
+        sdkHelpers.moduleManifest
+          .withName(name: name)
+          .withLegacyRuntime(runtime: "php", engineVersion: targetEngineVersion)
+          .generate(
+            rooted.withDirectory(scope, renderedTemplate(name, selectedTemplate)).withWorkdir(scope),
+            lock: false,
+            legacyJson: false,
+          )
+          .withWorkdir(".")
       }
       let module = Mod(rootPath: scope, ws: initialized, skipGenerateFilename: skipGenerateFilename)
       initialized.withChanges(module.generate).withWorkdir(scope)
@@ -85,18 +91,6 @@ type PhpSdk {
   compare base versions, so beta.12 and later engines load it alike.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.21"
-
-  """
-  The dagger-module.toml of a new module, as the engine wrote it before SDKs
-  owned the manifest, at targetEngineVersion.
-  """
-  let moduleManifest(name: String!): String! {
-    TOML.encode({{name: name}}) + "\n"
-      + "engineVersion = \"" + targetEngineVersion + "\"\n"
-      + "\n"
-      + "[runtime]\n"
-      + "  source = \"php\"\n"
-  }
 
   """
   Whether a module config exists in a workspace-root-relative directory.
