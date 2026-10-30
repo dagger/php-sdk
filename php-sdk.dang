@@ -72,7 +72,6 @@ type PhpSdk {
           .withLegacyRuntime(runtime: "php", engineVersion: targetEngineVersion)
           .generate(
             rooted.withDirectory(scope, renderedTemplate(name, selectedTemplate)).withWorkdir(scope),
-            lock: false,
             legacyJson: false,
           )
           .withWorkdir(".")
