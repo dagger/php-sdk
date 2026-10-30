@@ -83,6 +83,14 @@ type E2e {
       generated.file("dagger-module.toml").contents.contains("engineVersion = \"v1.0.0-beta.21\"\n"),
       "the module manifest should declare v1.0.0-beta.21, before the beta.22 API cut",
     )
+    assert(
+      contains(changes.addedPaths, layeringModulePath + "/dagger.json") == false,
+      "generateScope added a dagger.json to a new module",
+    )
+    assert(
+      generated.file("dagger-module.toml").contents.contains("source = \"php\""),
+      "the module manifest should select the php runtime",
+    )
     null
   }
 
