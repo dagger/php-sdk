@@ -466,15 +466,11 @@ type E2e {
   pub generatedEntrypointCallCheck(ws: Workspace!): Void @check {
     assertCalls(generatedEntrypoint(ws).directory("/" + entrypointModulePath))
 
-    let minimal = phpSdk.generateScope(ws.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
-      .withWorkdir(".")
-      .directory("/" + layeringModulePath)
-    let templated = callClient
-      .withDirectory("/work/app", minimal)
-      .withWorkdir("/work/app")
-      .withExec(["git", "init", "--quiet"])
-    assertContains(call(templated, ["call", "container-echo", "--string-arg", "from the template", "stdout"]), "from the template", "a main object without a constructor of its own should answer")
-    null
+    assertTemplateCalls(
+      phpSdk.generateScope(ws.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
+        .withWorkdir(".")
+        .directory("/" + layeringModulePath),
+    )
   }
 
   """
@@ -491,6 +487,25 @@ type E2e {
       assert(generated == "", "the SDK should accept " + version + ": " + generated)
     }
     assertCalls(generatedPastFloor(ws))
+    assertTemplateCalls(
+      phpSdk(enforceEngineFloor: false)
+        .generateScope(ws.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
+        .withWorkdir(".")
+        .directory("/" + layeringModulePath),
+    )
+  }
+
+  """
+  The default new-module path: a module from the minimal template has neither
+  fields nor a constructor of its own, and calls the engine from its function.
+  """
+  let assertTemplateCalls(module: Directory!): Void {
+    let templated = callClient
+      .withDirectory("/work/app", module)
+      .withWorkdir("/work/app")
+      .withExec(["git", "init", "--quiet"])
+    assertContains(call(templated, ["call", "container-echo", "--string-arg", "from the template", "stdout"]), "from the template", "a main object without a constructor of its own should answer")
+    null
   }
 
   let assertCalls(module: Directory!): Void {
