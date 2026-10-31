@@ -6,4 +6,4 @@ engineVersion = "v1.0.0-beta.12"
 
 [[dependencies]]
   name = "sdk-helpers"
-  source = "github.com/dagger/sdk-helpers@v1.0.7"
+  source = "github.com/dagger/sdk-helpers@v1.0.8"
