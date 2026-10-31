@@ -23,6 +23,14 @@ type E2e {
     ws.cwd.trimPrefix("/").trimSuffix("/")
   }
 
+  let assertContains(value: String!, want: String!, message: String!): Void {
+    assert(value.contains(want), message + ": " + value)
+  }
+
+  let assertNotContains(value: String!, unwanted: String!, message: String!): Void {
+    assert(value.contains(unwanted) == false, message + ": " + value)
+  }
+
   """
   Lookup supports both config formats and chooses the nearest config regardless
   of filename ordering.
@@ -80,16 +88,16 @@ type E2e {
       "generateScope did not write the module manifest",
     )
     assert(
-      generated.file("dagger-module.toml").contents.contains("engineVersion = \"v1.0.0-beta.21\"\n"),
-      "the module manifest should declare v1.0.0-beta.21, before the beta.22 API cut",
-    )
-    assert(
       contains(changes.addedPaths, layeringModulePath + "/dagger.json") == false,
       "generateScope added a dagger.json to a new module",
     )
-    assert(
-      generated.file("dagger-module.toml").contents.contains("source = \"php\""),
-      "the module manifest should select the php runtime",
+    let manifest = generated.file("dagger-module.toml").contents
+    assertContains(manifest, "source = \"./sdk/entrypoint\"", "a new module should run on the generated entrypoint")
+    assertNotContains(manifest, "[runtime]", "a new module should not keep the php runtime")
+    assertContains(
+      generated.file("sdk/entrypoint/dang.toml").contents,
+      "dagger = \"v1.0.0-beta.21\"",
+      "the entrypoint should declare v1.0.0-beta.21, before the identifier-casing cut",
     )
     null
   }

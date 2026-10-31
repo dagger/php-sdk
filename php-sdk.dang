@@ -45,8 +45,9 @@ type PhpSdk {
   """
   Generate one SDK scope: the module at the workspace cwd, when the scope is a
   module. A scope without a module config is first seeded from the `template`
-  setting, keeping the files already there, and given a dagger-module.toml.
-  Module clients are not generated yet.
+  setting, keeping the files already there, and given a dagger-module.toml. A
+  self-contained module then moves to the entrypoint this SDK generates; see
+  Mod.usesEntrypoint. Module clients are not generated yet.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
     if (clients.length > 0) {
@@ -76,20 +77,31 @@ type PhpSdk {
           )
           .withWorkdir(".")
       }
-      let module = Mod(rootPath: scope, ws: initialized, skipGenerateFilename: skipGenerateFilename)
-      initialized.withChanges(module.generate).withWorkdir(scope)
+      modAt(scope, initialized, name).generated.withWorkdir(scope)
     }
   }
 
   """
-  The engine API version a new module declares. It stays before
-  v1.0.0-beta.22, which renames core API fields and changes module naming,
-  until the PHP codegen is ported to those rules: declaring the running engine
-  would put new modules past that cut as soon as engines reach it. Every
-  v1.0.0 prerelease up to beta.21 shares one API view, and released engines
-  compare base versions, so beta.12 and later engines load it alike.
+  The engine API version a new module declares. It stays before the
+  identifier-casing cut, whose release is not decided and which renames core API
+  fields and changes module naming, until the PHP codegen is ported to those
+  rules: declaring the running engine would put new modules past that cut as soon
+  as engines reach it. Every v1.0.0 prerelease up to beta.21 shares one API view,
+  and released engines compare base versions, so older engines load it alike. The
+  module's client schema, its DAGGER_CLIENT_VERSION and its dang.toml use this one
+  value.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.21"
+
+  let modAt(path: String!, ws: Workspace!, name: String!): Mod! {
+    Mod(
+      rootPath: path,
+      ws: ws,
+      skipGenerateFilename: skipGenerateFilename,
+      targetEngineVersion: targetEngineVersion,
+      givenName: name,
+    )
+  }
 
   """
   Whether a module config exists in a workspace-root-relative directory.
@@ -159,11 +171,7 @@ type PhpSdk {
       normalizePath(path)
     }
 
-    Mod(
-      rootPath: modPath,
-      ws: ws,
-      skipGenerateFilename: skipGenerateFilename,
-    )
+    modAt(modPath, ws, "")
   }
 
   """
@@ -179,9 +187,15 @@ type PhpSdk {
   }
 
   """
-  Whether a module config selects the PHP runtime.
+  Whether a module config selects the PHP runtime or the entrypoint this SDK
+  generates.
   """
   let isPhpConfig(ws: Workspace!, configPath: String!): Boolean! {
+    let dir = configPath.split("/").dropLast(1).join("/")
+    selectsPhpRuntime(ws, configPath) or modAt(if (dir == "") { "." } else { dir }, ws, "").ownsEntrypoint
+  }
+
+  let selectsPhpRuntime(ws: Workspace!, configPath: String!): Boolean! {
     let pattern = if (configPath.trimSuffix("dagger-module.toml") != configPath) {
       tomlConfigPattern
     } else {

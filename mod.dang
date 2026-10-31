@@ -19,6 +19,20 @@ type Mod {
   let skipGenerateFilename: String!
 
   """
+  The engine version the module's client, schema and dang.toml all target.
+  """
+  let targetEngineVersion: String!
+
+  """
+  The module name the caller knows, empty to read it from the manifest.
+  """
+  let givenName: String!
+
+  let phpImage: String! = "php:8.4-cli-alpine@sha256:ef24d42ed7297dc8c9a6672988594c5f18702a434b3af48a3128fed8d2569746"
+  let composerImage: String! = "composer/composer:2.8-bin@sha256:c735b6a52ea118693178babc601984dbbbd07f1d31ec87eaa881173622b467ed"
+  let entrypointPath: String! = "sdk/entrypoint"
+
+  """
   Module root relative to the client's cwd.
   """
   pub path: String! {
@@ -41,7 +55,7 @@ type Mod {
   Whether this module or an ancestor contains the configured generate skip marker.
   """
   pub skipGenerate: Boolean! {
-    ws.findUp(name: skipGenerateFilename, from: rootPath) != null
+    ws.findUp(name: skipGenerateFilename, from: moduleRef) != null
   }
 
   """
@@ -52,10 +66,514 @@ type Mod {
     if (skipGenerate) {
       changeset
     } else {
-      # rootPath is workspace-root-relative: Workspace.moduleSource resolves a
-      # relative path from ws.cwd and would prefix it a second time.
-      let ref = if (rootPath == ".") { "/" } else { "/" + rootPath }
-      atCwd(ws.moduleSource(ref).generatedContextChangeset)
+      if (usesEntrypoint) {
+        let cwd = ws.cwd.trimPrefix("/")
+        entrypointGenerated.withWorkdir(if (cwd == "") { "." } else { cwd }).changes(ws)
+      } else {
+        legacyChanges
+      }
+    }
+  }
+
+  """
+  The workspace with this module generated, at the workspace root.
+  """
+  pub generated: Workspace! {
+    if (skipGenerate) {
+      ws.withWorkdir(".")
+    } else if (usesEntrypoint) {
+      entrypointGenerated
+    } else {
+      ws.withChanges(legacyChanges).withWorkdir(".")
+    }
+  }
+
+  """
+  Whether generation writes the entrypoint this SDK owns. A module with an
+  entrypoint of its own, a runtime other than PHP's, or a configuration the
+  entrypoint cannot preserve keeps the path the engine drives. The engine reads
+  a manifest with an entrypoint, dependencies and a runtime as a runtime
+  manifest, and refuses one without the runtime.
+  """
+  pub usesEntrypoint: Boolean! {
+    if (hasEntrypoint) {
+      if (ownsEntrypoint == false) {
+        false
+      } else if (declares("dependencies")) {
+        if (runtimeSource == "") {
+          raise "module at " + rootPath + " has an entrypoint and dependencies without a runtime, and an entrypoint has no dependency list: restore [runtime] source = \"php\" to keep the dependencies, or remove them"
+        }
+        false
+      } else if (entrypointBlockers.length > 0) {
+        raise "module at " + rootPath + " cannot keep its generated entrypoint: " + entrypointBlockers.join("; ")
+      } else {
+        true
+      }
+    } else if (runtimeSource != "php") {
+      false
+    } else {
+      declares("dependencies") == false and entrypointBlockers.length == 0
+    }
+  }
+
+  """
+  Whether the manifest names the entrypoint this SDK writes, and the entrypoint
+  is one this SDK wrote. Other SDKs write to the same path, so the path alone
+  does not tell.
+  """
+  pub ownsEntrypoint: Boolean! {
+    if (hasEntrypoint == false or fileExists(entrypointPath + "/build.dang") == false) {
+      false
+    } else {
+      let entrypoint = manifest.field(["entrypoint"])
+      stringField(entrypoint, "kind") == "dang" and
+        stringField(entrypoint, "source").trimPrefix("./").trimSuffix("/") == entrypointPath and
+        contentsOf(entrypointPath + "/build.dang").contains("type PhpModuleBuild")
+    }
+  }
+
+  """
+  The schema of the target engine version, which the client is generated from.
+  A manifest on the Dang runtime asks the engine for that view, whatever the
+  module's own manifest declares, and without dependencies.
+  """
+  pub clientSchema: File! {
+    let rooted = ws.withWorkdir(".")
+    sdkHelpers.moduleManifest
+      .withName(name: moduleName)
+      .withLegacyDangRuntime(engineVersion: targetEngineVersion)
+      .generate(rooted.withWorkdir(rootPath), lock: false, legacyJson: false)
+      .withWorkdir(".")
+      .moduleSource(moduleRef)
+      .introspectionSchemaJSON
+  }
+
+  """
+  A PHP container with Composer, as module calls run in.
+  """
+  pub phpContainer: Container! {
+    container
+      .from(phpImage)
+      .withExec(["apk", "add", "git", "openssh", "curl"])
+      .withFile("/usr/bin/composer", container.from(composerImage).file("/composer"))
+      .withMountedCache("/root/.composer", cacheVolume("composer-" + phpImage))
+      .withEnvVariable("COMPOSER_HOME", "/root/.composer")
+      .withEnvVariable("COMPOSER_NO_INTERACTION", "1")
+      .withEnvVariable("COMPOSER_ALLOW_SUPERUSER", "1")
+  }
+
+  let entrypointGenerated: Workspace! {
+    checkConfig
+    checkSdkOwned
+    let rooted = ws.withWorkdir(".")
+    let sdk = sdkTree
+    let describing = phpContainer
+      .withDirectory("/src", rooted.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true))
+      .withDirectory("/src/sdk", sdk)
+      .withWorkdir("/src")
+      .withExec(composerCommand)
+      .withExec(["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint"])
+    let entrypoint = describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang)
+    # Generated files are replaced whole: merging would keep client classes the
+    # target schema no longer has.
+    let cleared = if (fileExists("sdk")) { rooted.withoutDirectory(modulePath("sdk")) } else { rooted }
+    let written = cleared
+      .withDirectory(modulePath("sdk"), sdk.withDirectory("entrypoint", entrypoint))
+      .withNewFile(modulePath("composer.lock"), describing.file("/src/composer.lock").contents, permissions: 420)
+    withGitVisibility(withManifest(withConfig(written)))
+  }
+
+  """
+  The SDK library with its client generated, without what only generation needs.
+  """
+  let sdkTree: Directory! {
+    phpContainer
+      .withDirectory(
+        "/sdk",
+        currentModule.source.directory("sdk"),
+        include: ["src/**", "scripts/**", "bin/**", "composer.json", "composer.lock", "LICENSE"],
+      )
+      .withWorkdir("/sdk")
+      .withExec(["composer", "install", "--no-dev"])
+      .withMountedFile("/schema.json", clientSchema)
+      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
+      .directory("/sdk")
+      .withoutDirectory("vendor")
+      .withoutDirectory("scripts")
+      .withoutFile("composer.lock")
+      .withNewFile(".gitattributes", "** linguist-generated\n")
+  }
+
+  let composerCommand: [String!]! {
+    if (fileExists("composer.lock")) {
+      ["composer", "update", "--with-all-dependencies", "--minimal-changes", "dagger/dagger"]
+    } else {
+      ["composer", "install"]
+    }
+  }
+
+  let buildDang: String! {
+    currentModule.source.file("entrypoint/build.dang.tmpl").contents
+      .replaceMatches("@PHP_IMAGE@", phpImage)
+      .replaceMatches("@COMPOSER_IMAGE@", composerImage)
+  }
+
+  """
+  Write sdk/entrypoint/dang.toml. The loaded file is written back into the new
+  entrypoint first: replacing sdk/ removed it, and the helper reads what the
+  workspace holds at its cwd.
+  """
+  let withConfig(target: Workspace!): Workspace! {
+    let leaf = modulePath(entrypointPath + "/dang.toml")
+    let restored = if (fileExists(entrypointPath + "/dang.toml")) {
+      target.withNewFile(leaf, contentsOf(entrypointPath + "/dang.toml"), permissions: 420)
+    } else {
+      target
+    }
+    let keptAncestor = if (fileExists("sdk/dang.toml")) {
+      restored.withNewFile(modulePath("sdk/dang.toml"), contentsOf("sdk/dang.toml"), permissions: 420)
+    } else {
+      restored
+    }
+    let entrypointDir = keptAncestor.withWorkdir(modulePath(entrypointPath))
+    sdkHelpers.loadDangConfig(entrypointDir)
+      .withVersion("2.1")
+      .withDaggerImport(name: "Dagger", version: targetEngineVersion)
+      .generate(entrypointDir)
+      .withWorkdir(".")
+  }
+
+  """
+  A module migrating from the runtime loses what only a runtime reads. A module
+  already on the entrypoint keeps a runtime it names for older engines, which
+  read such a manifest as a runtime manifest.
+  """
+  let withManifest(target: Workspace!): Workspace! {
+    let loaded = sdkHelpers.loadModuleManifest(ws.withWorkdir(".").withWorkdir(rootPath))
+    let base = if (hasEntrypoint) { loaded } else { loaded.withoutLegacyFields }
+    base
+      .withName(name: moduleName)
+      .withDangEntrypoint(source: "./" + entrypointPath)
+      .generate(target.withWorkdir(rootPath), lock: false, legacyJson: false)
+      .withWorkdir(".")
+  }
+
+  """
+  The engine reads an entrypoint from a module's files, which .gitignore filters.
+  Any rule can match a file under sdk/, such as /sdk/generated/ or bin/, so unless
+  only vendor rules follow a re-inclusion of both sdk/ and its contents, it is
+  appended again: Git cannot re-include a file while its parent stays excluded. A
+  later rule overrides an earlier one, so the user's rules stay as they are. Only
+  this file is read: an ignore rule above the module still applies, as the README
+  says.
+  """
+  let withGitVisibility(target: Workspace!): Workspace! {
+    let existing = if (fileExists(".gitignore")) { contentsOf(".gitignore") } else { "" }
+    let lines = existing.split("\n")
+      .map { line => line.trimSpace }
+      .filter { line => line != "" and line.hasPrefix("#") == false }
+    let vendorRules = ["vendor", "/vendor", "vendor/", "/vendor/"]
+    let rulesAfterInclusion = lines.reduce([] :: [String!]!) { rules, line =>
+      if (line == "!/sdk/**" and rules.length > 0 and (rules[rules.length - 1] ?? "") == "!/sdk/") {
+        [] :: [String!]!
+      } else {
+        rules + [line]
+      }
+    }
+    let sdkMayBeHidden = rulesAfterInclusion.filter { line => vendorRules.contains(line) == false }.length > 0
+    let vendorIgnored = lines.filter { line => vendorRules.contains(line) }.length > 0
+    let added = (if (vendorIgnored) { "" } else { "/vendor/\n" }) + (if (sdkMayBeHidden) { "!/sdk/\n!/sdk/**\n" } else { "" })
+    if (added == "") {
+      target
+    } else {
+      let separator = if (existing == "" or existing.hasSuffix("\n")) { "" } else { "\n" }
+      target.withNewFile(modulePath(".gitignore"), existing + separator + added, permissions: 420)
+    }
+  }
+
+  """
+  Refuse a dang.toml the generated entrypoint would change or hide without saying
+  so. A dang.toml in the entrypoint directory counts as this SDK's only when the
+  module's entrypoint does. A file above it within the module applies until a
+  nearer one is written, so writing one must not drop what that file sets.
+  """
+  let checkConfig: Void {
+    if (fileExists(entrypointPath + "/dang.toml")) {
+      if (ownsEntrypoint == false) {
+        raise configIn(entrypointPath) + " was not written by this SDK, and generating the entrypoint would replace it: move it, or remove it"
+      }
+      let config = parsedToml(contentsOf(entrypointPath + "/dang.toml"))
+      let language = stringField(config, "dang")
+      if (language != "" and language != "2.1") {
+        raise configIn(entrypointPath) + " declares dang = " + language + ", and the generated entrypoint is written in Dang 2.1"
+      }
+      importNames(config).each { name =>
+        let imported = config.field(["imports", name])
+        let dagger = stringField(imported, "dagger")
+        if (name == "Dagger" and stringField(imported, "path") != "") {
+          raise configIn(entrypointPath) + " gives the Dagger import a path, and the generated entrypoint needs it to connect to the engine"
+        }
+        if (dagger != "" and dagger != targetEngineVersion and name != "Dagger") {
+          raise configIn(entrypointPath) + " pins the import " + name + " to Dagger " + dagger + ", which disagrees with the generated entrypoint's " + targetEngineVersion
+        }
+        if (pathStaysInSdk(stringField(imported, "path"))) {
+          raise configIn(entrypointPath) + " imports " + name + " from " + stringField(imported, "path") + " inside sdk/, which generation replaces: move it outside sdk/"
+        }
+        null
+      }
+      null
+    } else {
+      ["sdk/dang.toml", "dang.toml"].filter { path => fileExists(path) }.each { path =>
+        if (isSubsumedConfig(parsedToml(contentsOf(path))) == false) {
+          raise path + " in the module at " + rootPath + " applies to the entrypoint, and the dang.toml generated beside it would replace its settings: move them to " + entrypointPath + "/dang.toml"
+        }
+        null
+      }
+      null
+    }
+  }
+
+  """
+  Whether an import path of the entrypoint's dang.toml resolves inside sdk/.
+  """
+  let pathStaysInSdk(path: String!): Boolean! {
+    let resolved = path.split("/").reduce(["sdk", "entrypoint"]) { segments, segment =>
+      if (segment == "" or segment == ".") {
+        segments
+      } else if (segment == ".." and segments.length > 0 and (segments[segments.length - 1] ?? "") != "..") {
+        segments.dropLast(1)
+      } else {
+        segments + [segment]
+      }
+    }
+    path != "" and path.hasPrefix("/") == false and (resolved[0] ?? "") == "sdk"
+  }
+
+  """
+  Whether a dang.toml sets nothing but what the generated one sets too.
+  """
+  let isSubsumedConfig(config: JSONValue!): Boolean! {
+    let extra = config.fields.filter { field => field != "dang" and field != "imports" }
+    let language = stringField(config, "dang")
+    let imports = importNames(config).filter { name =>
+      let imported = config.field(["imports", name])
+      let dagger = stringField(imported, "dagger")
+      name != "Dagger" or imported.fields.filter { field => field != "dagger" }.length > 0 or
+        (dagger != "" and dagger != targetEngineVersion)
+    }
+    extra.length == 0 and (language == "" or language == "2.1") and imports.length == 0
+  }
+
+  let importNames(config: JSONValue!): [String!]! {
+    if (config.fields.contains("imports")) { config.field(["imports"]).fields } else { [] }
+  }
+
+  let configIn(dir: String!): String! {
+    dir + "/dang.toml in the module at " + rootPath
+  }
+
+  """
+  sdk/ belongs to the SDK. A directory there that is not the SDK's library is the
+  user's, and replacing it would lose it.
+  """
+  let checkSdkOwned: Void {
+    if (fileExists("sdk")) {
+      let name = if (fileExists("sdk/composer.json")) {
+        stringField(parsedJson(contentsOf("sdk/composer.json")), "name")
+      } else {
+        ""
+      }
+      if (name != "dagger/dagger") {
+        raise "sdk/ in the module at " + rootPath + " is not the SDK's library, and generating would replace it: move it"
+      }
+    }
+    null
+  }
+
+  """
+  Why the generated entrypoint cannot run this module. The entrypoint builds from
+  the module's own directory with the Composer settings the module has, so what
+  reaches outside that directory, or changes what it loads, is not preserved.
+  """
+  let entrypointBlockers: [String!]! {
+    let declared = ["include", "exclude", "blueprint", "toolchains"]
+      .filter { field => declares(field) }
+      .map { field => "it declares " + field }
+    let source = stringField(manifest, "source").trimPrefix("./").trimSuffix("/")
+    let sourceBlocker = if (source == "" or source == ".") { [] :: [String!]! } else { ["its source is " + source] }
+    declared + sourceBlocker + composerBlockers
+  }
+
+  let composerBlockers: [String!]! {
+    if (fileExists("composer.json") == false) {
+      ["it has no composer.json"]
+    } else {
+      let composer = parsedJson(contentsOf("composer.json"))
+      let repositories = if (composer.fields.contains("repositories")) { rawEntries(composer.field(["repositories"])) } else { [] :: [String!]! }
+      let repoPaths = repositories
+        .filter { repository => stringField(parsedJson(repository), "type") == "path" }
+        .map { repository => stringField(parsedJson(repository), "url") }
+      let usesSdk = repoPaths.filter { path => path.trimPrefix("./").trimSuffix("/") == "sdk" }.length > 0
+      let external = (repoPaths + autoloadPaths(composer, "autoload") + autoloadPaths(composer, "autoload-dev"))
+        .filter { path => leavesModule(path) }
+        .map { path => "Composer reads " + path + " outside the module" }
+      let vendorDir = if (composer.fields.contains("config")) { stringField(composer.field(["config"]), "vendor-dir") } else { "" }
+      (if (usesSdk) { [] :: [String!]! } else { ["composer.json has no path repository ./sdk"] }) +
+        external +
+        (if (vendorDir == "" or vendorDir == "vendor") { [] :: [String!]! } else { ["composer.json moves vendor-dir to " + vendorDir] })
+    }
+  }
+
+  let autoloadPaths(composer: JSONValue!, section: String!): [String!]! {
+    if (composer.fields.contains(section)) {
+      let autoload = composer.field([section])
+      autoload.fields.reduce([] :: [String!]!) { paths, kind =>
+        let value = autoload.field([kind])
+        let nested = if (kind == "psr-4" or kind == "psr-0") { rawEntries(value) } else { [toString(value.contents)] }
+        paths + nested.reduce([] :: [String!]!) { found, item => found + stringsOf(item) }
+      }
+    } else {
+      []
+    }
+  }
+
+  let leavesModule(path: String!): Boolean! {
+    let depth = path.split("/").reduce(0) { current, segment =>
+      if (current < 0) {
+        current
+      } else if (segment == "..") {
+        current - 1
+      } else if (segment == "" or segment == ".") {
+        current
+      } else {
+        current + 1
+      }
+    }
+    path.hasPrefix("/") or path.hasPrefix("~") or path.contains("$") or depth < 0
+  }
+
+  """
+  The elements of a JSON array or the values of an object, as JSON text.
+  """
+  let rawEntries(value: JSONValue!): [String!]! {
+    if (toString(value.contents).trimSpace.hasPrefix("[")) {
+      value.asArray.{{contents}}.map { item => toString(item.contents) }
+    } else {
+      value.fields.map { name => toString(value.field([name]).contents) }
+    }
+  }
+
+  let stringsOf(raw: String!): [String!]! {
+    let text = raw.trimSpace
+    if (text.hasPrefix("\"")) {
+      [parsedJson(text).asString]
+    } else if (text.hasPrefix("[")) {
+      rawEntries(parsedJson(text)).reduce([] :: [String!]!) { found, item => found + stringsOf(item) }
+    } else {
+      []
+    }
+  }
+
+  let parsedJson(raw: String!): JSONValue! {
+    json.withContents((raw :: Dagger.JSON!))
+  }
+
+  let stringField(value: JSONValue!, key: String!): String! {
+    let fields = value.fields rescue {
+      err: Error => [] :: [String!]!
+    }
+    if (fields.contains(key)) {
+      value.field([key]).asString rescue {
+        err: Error => ""
+      }
+    } else {
+      ""
+    }
+  }
+
+  """
+  A manifest field that holds something: a null or an empty list says nothing.
+  """
+  let declares(field: String!): Boolean! {
+    if (manifest.fields.contains(field)) {
+      let raw = toString(manifest.field([field]).contents).trimSpace
+      raw != "null" and raw != "[]" and raw != "{}" and raw != "\"\""
+    } else {
+      false
+    }
+  }
+
+  let runtimeSource: String! {
+    let key = if (manifest.fields.contains("runtime")) { "runtime" } else if (manifest.fields.contains("sdk")) { "sdk" } else { "" }
+    if (key == "") {
+      ""
+    } else {
+      let value = manifest.field([key])
+      value.asString rescue {
+        err: Error => stringField(value, "source")
+      }
+    }
+  }
+
+  let hasEntrypoint: Boolean! {
+    manifest.fields.contains("entrypoint")
+  }
+
+  let manifest: JSONValue! {
+    if (fileExists("dagger-module.toml")) {
+      parsedToml(contentsOf("dagger-module.toml"))
+    } else if (fileExists("dagger.json")) {
+      parsedJson(contentsOf("dagger.json"))
+    } else {
+      parsedJson("{}")
+    }
+  }
+
+  let parsedToml(contents: String!): JSONValue! {
+    parsedJson(JSON.encode(TOML.decode(contents)))
+  }
+
+  let moduleName: String! {
+    if (givenName != "") { givenName } else { stringField(manifest, "name") }
+  }
+
+  let moduleRef: String! {
+    # rootPath is workspace-root-relative: Workspace.moduleSource resolves a
+    # relative path from ws.cwd and would prefix it a second time.
+    if (rootPath == ".") { "/" } else { "/" + rootPath }
+  }
+
+  let modulePath(path: String!): String! {
+    if (rootPath == ".") { path } else { rootPath + "/" + path }
+  }
+
+  let fileExists(path: String!): Boolean! {
+    let full = modulePath(path)
+    ws.directory("/", include: [full]).exists(full)
+  }
+
+  let contentsOf(path: String!): String! {
+    let full = modulePath(path)
+    ws.directory("/", include: [full]).file(full).contents
+  }
+
+  """
+  The engine's changes to this module. Its runtime path replaces sdk/, so a
+  dang.toml of the entrypoint this module also names would go with it; it is
+  kept for the day the module leaves the runtime.
+  """
+  let legacyChanges: Changeset! {
+    let changes = ws.moduleSource(moduleRef).generatedContextChangeset
+    if (ownsEntrypoint and fileExists(entrypointPath + "/dang.toml")) {
+      let rooted = ws.withWorkdir(".")
+      atCwd(
+        rooted
+          .withChanges(changes)
+          .withNewFile(modulePath(entrypointPath + "/dang.toml"), contentsOf(entrypointPath + "/dang.toml"), permissions: 420)
+          .changes(rooted),
+      )
+    } else {
+      atCwd(changes)
     }
   }
 
