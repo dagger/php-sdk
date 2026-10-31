@@ -11,13 +11,25 @@ the engine owns the workspace bookkeeping. Dependencies between modules are
 module clients, which this SDK does not generate yet; see
 [Module clients](#module-clients).
 
-The PHP module runtime (the container that runs PHP modules and the GraphQL ->
-PHP codegen) still lives in
-[`github.com/dagger/dagger/sdk/php`](https://github.com/dagger/dagger/tree/main/sdk/php);
-this module wraps the init/scaffolding ergonomics on top of it.
+The PHP library and codegen live under [`sdk/`](./sdk), vendored from
+dagger/dagger; [`sdk/VENDOR.md`](./sdk/VENDOR.md) records the commit. Generation
+writes them into each module with a client generated against
+`v1.0.0-beta.21`.
 
-It uses the engine's native `Workspace` and `ModuleSource` APIs directly and
-needs an engine from v1.0.0-beta.12.
+## Engine requirement
+
+This module needs an engine from `v1.0.0-beta.21`. The e2e module's
+`entrypoint-floor-check` runs the generated entrypoint on the engine that runs the
+check, and the floor is the oldest release it passes on.
+
+Earlier versions of this module documented `v1.0.0-beta.12`. On an older engine,
+`dagger generate` and `dagger module init` now stop with a message that names the
+engine, including for a module that keeps the built-in runtime. Upgrade the engine
+to generate. The engine resolves its built-in PHP runtime from
+`github.com/dagger/dagger/sdk/php`, not from this module. A module already on the
+built-in runtime therefore still loads on that engine, without this module
+generating it. The `enforceEngineFloor` setting turns the refusal off for the floor
+check. An engine below the floor is not supported.
 
 ## Install
 
@@ -41,8 +53,8 @@ dagger module init php --name my-module
 ```
 
 The engine records the module scope in `dagger.toml` and calls `generateScope`,
-which seeds the starter template, writes `dagger-module.toml` and generates the
-SDK files in one step. Files already in the module directory are kept.
+which seeds the starter template, writes `dagger-module.toml`, the SDK and the
+entrypoint in one step. Files already in the module directory are kept.
 
 `--template` picks a starter template under `templates/` (`minimal` is the
 default):
@@ -72,6 +84,85 @@ directory.
 
 See [`php-sdk.dang`](./php-sdk.dang) for the full type surface.
 
+## Generated entrypoint
+
+Generation writes `sdk/` and a Dang entrypoint in `sdk/entrypoint/`: `main.dang`,
+`types.dang`, `build.dang` and `dang.toml`. `dagger-module.toml` names the
+entrypoint, and the engine runs a function through it. Commit `sdk/` and
+`composer.lock`: a module loaded from Git needs them.
+
+A module moves to the entrypoint when it is self-contained. A module that has any
+of the following keeps the runtime in its manifest and gets no `dang.toml`:
+
+- `[[dependencies]]`
+- `include`, `exclude`, `blueprint` or `toolchains`
+- a `source` other than the module directory
+- no `composer.json`, or one without the `./sdk` path repository
+- a Composer path or autoload path outside the module
+- a Composer `vendor-dir` other than `vendor`
+- a runtime other than `php`
+
+To move such a module, remove what keeps it there and run `dagger generate`. A
+custom entrypoint stays as it is.
+
+A module already on the generated entrypoint that gains a Composer path outside the
+module, or include rules, fails to generate. A generated entrypoint with
+`[[dependencies]]` and a `[runtime]` reads as a runtime manifest. With
+`[[dependencies]]` and no `[runtime]`, generation and the engine refuse it, because
+an entrypoint has no dependency list.
+
+### Git
+
+The engine reads the entrypoint from the module's files, which `.gitignore` filters.
+Generation appends rules to the module's `.gitignore` and changes no existing rule:
+`!/sdk/` and `!/sdk/**` after any rule other than a `vendor/` rule, and `/vendor/`
+when no rule ignores `vendor/`. An ignore rule in a directory above the module still
+applies. Remove that rule yourself.
+
+### dang.toml
+
+The SDK manages the Dagger version in `sdk/entrypoint/dang.toml`, and sets it to the
+version the module's client is generated against, `v1.0.0-beta.21`. Generation
+replaces `dagger = true` or an older version on the `Dagger` import, requires
+`dang = "2.1"`, and keeps every other setting. Comments and formatting are lost, and
+keys are written in alphabetical order.
+
+Generation fails, and writes nothing, in these cases:
+
+- `dang` declares another language version.
+- The `Dagger` import has a `path` or a non-empty `endpoint`.
+- Another import declares a different Dagger version.
+- An import has a `path` inside `sdk/`, which generation replaces.
+- `sdk/entrypoint/dang.toml` exists and the module's manifest does not name the
+  entrypoint this SDK wrote.
+- `sdk/` exists and is not this SDK's library.
+- A `dang.toml` above the entrypoint within the module holds settings that the
+  generated file would hide. Files are not merged, so move those settings into
+  `sdk/entrypoint/dang.toml`.
+
+Generation never changes a `dang.toml` above the entrypoint.
+
+`dang = "2.1"` is the language version. The version on the import is a Dagger
+version, and parsing it needs Dang v2.2.0. Standalone Dang tooling older than v2.2.0
+may reject the import.
+
+The generated files carry the same version in two channels:
+
+- `dang.toml`: no release up to `v1.0.0-beta.22` reads it, because those engines copy
+  only `.dang` files to evaluate an entrypoint. dagger/dagger#14902, which is open,
+  reads it to select the module's API view.
+- `DAGGER_CLIENT_VERSION` on the exec that runs the module: dagger/dagger#14881 makes
+  the engine read it. `v1.0.0-beta.22` is the first release with that change.
+
+The version stays `v1.0.0-beta.21` until the PHP codegen is ported to the
+identifier-casing rules. The release of that cut is not decided. Every v1.0.0
+prerelease up to `v1.0.0-beta.21` shares one API view, the view the client is generated
+against, and `v1.0.0-beta.22` is the first with a view of its own.
+
+Passing checks on a released engine show what generation writes and that calls work.
+They do not show that `dang.toml` selects a view. No check here shows that
+`DAGGER_CLIENT_VERSION` selects one.
+
 ## Client roots
 
 `findClientRoot` detects the PHP client root containing your current directory:
@@ -99,12 +190,6 @@ to the new SDK registration, then regenerate:
 dagger ws migrate
 dagger generate
 ```
-
-A workspace that installed php-sdk from a local path needs engine
-v1.0.0-beta.13 or later to migrate, because v1.0.0-beta.12 hits an engine bug
-fixed in dagger/dagger
-[`26a952eafb`](https://github.com/dagger/dagger/commit/26a952eafbf3a413ef7bf6960923af7f316b9dc1);
-one that installed `github.com/dagger/php-sdk` migrates on v1.0.0-beta.12.
 
 ## Skipping generation
 
