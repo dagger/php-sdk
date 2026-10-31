@@ -120,10 +120,11 @@ an entrypoint has no dependency list.
 
 Generating the entrypoint fails for an enum whose cases the engine would give one name,
 such as `Low` and `LOW`, because the engine would replace one with the other without
-an error. The message names the enum and both cases. Generation changes no files, so a
-module moving from the built-in runtime stays on it until you rename one of the cases
-and update its references. A generated entrypoint gets this check the next time it is
-generated.
+an error. The message names the enum and both cases. The failed generation applies none
+of its changes: the module's manifest and `sdk/` stay as they were, so a module moving
+from the built-in runtime stays on it until you rename one of the cases and update its
+references. The engine can still update the workspace's `dagger.lock` when the session
+ends. A generated entrypoint gets this check the next time it is generated.
 
 ### Git
 
@@ -141,7 +142,7 @@ replaces `dagger = true` or an older version on the `Dagger` import, requires
 `dang = "2.1"`, and keeps every other setting. Comments and formatting are lost, and
 keys are written in alphabetical order.
 
-Generation fails, and writes nothing, in these cases:
+Generation fails, and applies none of its changes, in these cases:
 
 - `dang` declares another language version.
 - The `Dagger` import has a `path` or a non-empty `endpoint`.
