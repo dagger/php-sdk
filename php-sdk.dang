@@ -22,6 +22,13 @@ type PhpSdk {
   pub template: String! = "minimal"
 
   """
+  Refuse an engine below the floor. The e2e module turns this off to find the
+  floor, which needs a public setting because it is another module. An engine
+  below the floor is not supported.
+  """
+  pub enforceEngineFloor: Boolean! = true
+
+  """
   Find the PHP client root containing the workspace cwd: the directory of the
   nearest composer.json, relative to the workspace root. A module's vendored
   SDK carries its own composer.json under sdk/, so the module owning it answers
@@ -50,6 +57,7 @@ type PhpSdk {
   Mod.usesEntrypoint. Module clients are not generated yet.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
+    checkEngine
     if (clients.length > 0) {
       raise "php-sdk does not generate module clients yet"
     }
@@ -92,6 +100,33 @@ type PhpSdk {
   value.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.21"
+
+  """
+  The oldest release the generated entrypoint passes on, by the e2e module's
+  entrypoint-floor-check.
+  """
+  let floorEngineVersion: String! = "v1.0.0-beta.21"
+
+  """
+  Whether the running engine is below the floor. Released engines compare base
+  versions, so the manifest's engineVersion does not keep an older v1.0.0
+  prerelease out. A dev build or a later release is not below it.
+  """
+  pub belowEngineFloor: Boolean! {
+    let prefix = "v1.0.0-beta."
+    let release = version.split("+")[0] ?? version
+    let beta = release.trimPrefix(prefix)
+    let floor = floorEngineVersion.trimPrefix(prefix)
+    release.hasPrefix("v0.") or release.hasPrefix("v1.0.0-0") or
+      (beta != release and beta.containsMatch("^[0-9]+$") and beta.padLeft(6) < floor.padLeft(6))
+  }
+
+  let checkEngine: Void {
+    if (enforceEngineFloor and belowEngineFloor) {
+      raise "php-sdk needs an engine from " + floorEngineVersion + ", and this one is " + version + ": upgrade the engine"
+    }
+    null
+  }
 
   let modAt(path: String!, ws: Workspace!, name: String!): Mod! {
     Mod(
@@ -150,6 +185,7 @@ type PhpSdk {
   When `findUp` is true, `path` may point inside the module.
   """
   pub mod(ws: Workspace!, path: String! = ".", findUp: Boolean! = true): Mod! {
+    checkEngine
     let modPath = if (findUp) {
       # Pick the nearest enclosing config regardless of filename ordering.
       let foundConfigPath = moduleConfigFilenames.reduce(null) { nearest, filename =>

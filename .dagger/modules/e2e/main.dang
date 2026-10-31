@@ -51,6 +51,17 @@ type E2e {
     phpSdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: []).withWorkdir(".")
   }
 
+  """
+  The module directory generated with the engine floor off, so the entrypoint
+  itself is what passes or fails on an older engine.
+  """
+  let generatedPastFloor(ws: Workspace!): Directory! {
+    phpSdk(enforceEngineFloor: false)
+      .generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: [])
+      .withWorkdir(".")
+      .directory("/" + entrypointModulePath)
+  }
+
   let usesEntrypoint(ws: Workspace!): Boolean! {
     phpSdk.mod(ws, path: entrypointModulePath, findUp: false).usesEntrypoint
   }
@@ -464,6 +475,22 @@ type E2e {
       .withExec(["git", "init", "--quiet"])
     assertContains(call(templated, ["call", "container-echo", "--string-arg", "from the template", "stdout"]), "from the template", "a main object without a constructor of its own should answer")
     null
+  }
+
+  """
+  The generated entrypoint on the engine running this check, which is the only
+  engine it uses: the check passing on a release means the entrypoint supports
+  that release. Run it on each release in turn to find the floor. It also holds the
+  SDK's refusal to the floor it declares.
+  """
+  pub entrypointFloorCheck(ws: Workspace!): Void @check {
+    let generated = generationError(ws)
+    if (phpSdk.belowEngineFloor) {
+      assertContains(generated, "needs an engine from", "the SDK should refuse " + version)
+    } else {
+      assert(generated == "", "the SDK should accept " + version + ": " + generated)
+    }
+    assertCalls(generatedPastFloor(ws))
   }
 
   let assertCalls(module: Directory!): Void {
