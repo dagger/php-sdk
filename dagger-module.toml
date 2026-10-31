@@ -1,5 +1,5 @@
 name = "php-sdk"
-engineVersion = "v1.0.0-beta.21"
+engineVersion = "v1.0.0-beta.17"
 
 [runtime]
   source = "dang"

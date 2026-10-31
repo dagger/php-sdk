@@ -18,9 +18,16 @@ writes them into each module with a client generated against
 
 ## Engine requirement
 
-This module needs an engine from `v1.0.0-beta.21`. The e2e module's
-`entrypoint-floor-check` runs the generated entrypoint on the engine that runs the
-check, and the floor is the oldest release it passes on.
+This module needs an engine from `v1.0.0-beta.17`, the oldest release its generated
+entrypoint is known to work on, including PHP's ordinary mixed-case enums. The e2e
+module's `entrypoint-floor-check` tests this on the engine that runs it.
+
+The check fails on `v1.0.0-beta.16`. That engine sends an enum argument by its canonical
+name, `LOW` for `case Low`, which PHP cannot read. dagger/dagger
+[`67f0790ef5`](https://github.com/dagger/dagger/commit/67f0790ef53d1af013c7191eb3b730d38b93ab33)
+fixes this. The check stops at that failure, so other modules on that release are
+untested and not supported. Modules still target `v1.0.0-beta.21`: the floor only says
+which engines this module runs on.
 
 Earlier versions of this module documented `v1.0.0-beta.12`. On an older engine,
 `dagger generate` and `dagger module init` now stop with a message that names the
