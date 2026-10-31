@@ -97,7 +97,8 @@ type PhpSdk {
   as engines reach it. Every v1.0.0 prerelease up to beta.21 shares one API view,
   and released engines compare base versions, so older engines load it alike. The
   module's client schema, its DAGGER_CLIENT_VERSION and its dang.toml use this one
-  value.
+  value. Moving it across that cut also means checking the naming that
+  sdk/src/Module/EngineNaming.php mirrors.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.21"
 

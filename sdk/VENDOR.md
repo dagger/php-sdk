@@ -24,6 +24,12 @@ Files this repository adds, which have no counterpart in dagger/dagger:
 - `src/Module/`, `bin/dagger-module`, `tests/Unit/Module/`, `.gitignore` and this
   file.
 
+`src/Module/EngineNaming.php` ports part of
+[iancoleman/strcase](https://github.com/iancoleman/strcase) v0.3.0, and keeps that
+project's MIT license notice in its header. Generated modules copy `src/` and
+`LICENSE` but not this file, so the notice has to travel with the port. The rest of
+this library stays under `LICENSE`.
+
 `generated/` is not committed. `Mod` generates it for each module from the schema
 of `PhpSdk.targetEngineVersion`, and the e2e module generates it for the unit
 tests.

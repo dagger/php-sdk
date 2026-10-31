@@ -118,6 +118,13 @@ module, or include rules, fails to generate. A generated entrypoint with
 `[[dependencies]]` and no `[runtime]`, generation and the engine refuse it, because
 an entrypoint has no dependency list.
 
+Generating the entrypoint fails for an enum whose cases the engine would give one name,
+such as `Low` and `LOW`, because the engine would replace one with the other without
+an error. The message names the enum and both cases. Generation changes no files, so a
+module moving from the built-in runtime stays on it until you rename one of the cases
+and update its references. A generated entrypoint gets this check the next time it is
+generated.
+
 ### Git
 
 The engine reads the entrypoint from the module's files, which `.gitignore` filters.

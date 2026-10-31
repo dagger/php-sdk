@@ -13,7 +13,7 @@ type E2e {
   let entrypointName: String! = "entrypoint-app"
   let target: String! = "v1.0.0-beta.21"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
-  let unitTestFilter: String! = "EntrypointMetadataTest|DangEntrypointRendererTest|CallDispatcherTest|ValueCodecTest"
+  let unitTestFilter: String! = "EntrypointMetadataTest|DangEntrypointRendererTest|EngineNamingTest|CallDispatcherTest|ValueCodecTest"
 
   let assert(condition: Boolean!, message: String!): Void {
     if (condition == false) { raise message }
@@ -158,6 +158,10 @@ type E2e {
       "dagger = \"v1.0.0-beta.21\"",
       "the entrypoint should declare v1.0.0-beta.21, before the identifier-casing cut",
     )
+    let portedNaming = generated.file("sdk/src/Module/EngineNaming.php").contents
+    assertContains(portedNaming, "Copyright (c) 2018 Ma_124", "the generated SDK should keep the strcase copyright")
+    assertContains(portedNaming, "Permission is hereby granted", "the generated SDK should keep the strcase permission notice")
+    assertContains(generated.file("sdk/LICENSE").contents, "Apache License", "the generated SDK should keep its own license")
     null
   }
 

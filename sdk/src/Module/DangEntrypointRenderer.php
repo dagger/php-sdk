@@ -106,6 +106,8 @@ final readonly class DangEntrypointRenderer
     /** @return list<string> */
     private static function enum(DaggerEnum $enum): array
     {
+        self::refuseCollidingCases($enum);
+
         $name = NormalizesClassName::trimLeadingNamespace($enum->name);
         $lines = ['typeDef.withEnum(' . self::quote($name) . self::option('description', $enum->description) . ')'];
 
@@ -116,6 +118,30 @@ final readonly class DangEntrypointRenderer
         }
 
         return $lines;
+    }
+
+    /**
+     * The engine replaces a member that has the name of an earlier one without
+     * an error, which would lose a PHP case from the module. Names are escaped
+     * because two that collide can differ only in invisible bytes.
+     */
+    private static function refuseCollidingCases(DaggerEnum $enum): void
+    {
+        $visible = static fn(string $name) => addcslashes($name, "\x80..\xff");
+        $seen = [];
+        foreach ($enum->cases as $case) {
+            $name = EngineNaming::enumMemberName($case->name);
+            if (isset($seen[$name])) {
+                throw new RuntimeException(sprintf(
+                    'Enum %s cannot be registered: the engine gives its cases %s and %s the same name, %s. Rename one.',
+                    $enum->name,
+                    $visible($seen[$name]),
+                    $visible($case->name),
+                    $visible($name),
+                ));
+            }
+            $seen[$name] = $case->name;
+        }
     }
 
     /** @return list<string> */

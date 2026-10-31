@@ -6,6 +6,9 @@ namespace Dagger\Tests\Unit\Module;
 
 use Dagger\Module\DangEntrypointRenderer;
 use Dagger\Module\Description;
+use Dagger\Module\EngineNaming;
+use Dagger\ValueObject\DaggerEnum;
+use Dagger\ValueObject\DaggerEnumCase;
 use Dagger\ValueObject\DaggerObject;
 use Dagger\ValueObject\Type;
 use Generator;
@@ -18,6 +21,7 @@ use RuntimeException;
 
 #[Group('unit')]
 #[CoversClass(DangEntrypointRenderer::class)]
+#[CoversClass(EngineNaming::class)]
 class DangEntrypointRendererTest extends TestCase
 {
     private const FIXTURE = __DIR__ . '/Fixture';
@@ -103,6 +107,101 @@ class DangEntrypointRendererTest extends TestCase
             'description: "says \"hi\"\nto $you and é\\\\"',
             DangEntrypointRenderer::renderTypes($description, 'helper'),
         );
+    }
+
+    #[Test, DataProvider('provideCollidingCases')]
+    public function itRefusesCasesTheEngineWouldMerge(string $first, string $second, string $name): void
+    {
+        self::expectException(RuntimeException::class);
+        self::expectExceptionMessage(sprintf(
+            'its cases %s and %s the same name, %s',
+            addcslashes($first, "\x80..\xff"),
+            addcslashes($second, "\x80..\xff"),
+            $name,
+        ));
+
+        DangEntrypointRenderer::renderTypes(self::enumOf('Other', $first, $second), 'main');
+    }
+
+    /** @return Generator<string, array{string, string, string}> */
+    public static function provideCollidingCases(): Generator
+    {
+        yield 'differing by case' => ['Low', 'LOW', 'LOW'];
+        yield 'a word boundary and an underscore' => ['FooBar', 'FOO_BAR', 'FOO_BAR'];
+        yield 'two spellings of a boundary' => ['FooBar', 'Foo_Bar', 'FOO_BAR'];
+        yield 'a leading no-break space' => ["\u{00A0}LOW", 'LOW', 'LOW'];
+        yield 'a trailing ideographic space' => ['Low', "Low\u{3000}", 'LOW'];
+        yield 'a trimmed name reaching a boundary' => ["\u{00A0}A1", 'A_1', 'A_1'];
+    }
+
+    #[Test, DataProvider('provideDistinctCases')]
+    public function itAcceptsCasesTheEngineKeepsApart(string ...$cases): void
+    {
+        $types = DangEntrypointRenderer::renderTypes(self::enumOf(...$cases), 'main');
+
+        foreach ($cases as $case) {
+            self::assertStringContainsString(sprintf('.withEnumMember("%s")', $case), $types);
+        }
+    }
+
+    /** @return Generator<string, list<string>> */
+    public static function provideDistinctCases(): Generator
+    {
+        yield 'ordinary cases' => ['Low', 'High'];
+        yield 'with and without a boundary' => ['FOOBAR', 'FOO_BAR'];
+        yield 'mixed and upper case' => ['FooBar', 'FOOBAR'];
+        yield 'a word boundary only in one' => ['ReadOnly', 'READONLY'];
+        yield 'a digit boundary only in one' => ['Foo1', 'FOO1'];
+        yield 'one and two underscores' => ['Foo_Bar', 'Foo__Bar'];
+        yield 'a leading underscore' => ['_Low', 'Low'];
+        yield 'an underscore before a digit' => ['A1', 'A_1'];
+        yield 'several' => ['Low', 'Medium', 'High'];
+        yield 'a trimmed name that keeps its boundary' => ["\u{00A0}A1", 'A1'];
+        yield 'a no-break space inside a name' => ["Lo\u{00A0}w", 'Low'];
+        yield 'a zero width space, which is not trimmed' => ["\u{200B}LOW", 'LOW'];
+    }
+
+    #[Test]
+    public function itRefusesCollidingCasesFoundInPhpSource(): void
+    {
+        $directory = sys_get_temp_dir() . '/' . uniqid('dagger-enum-', true);
+        mkdir($directory);
+        $file = "$directory/SpacedLevel.php";
+        file_put_contents($file, <<<PHP
+            <?php
+            namespace DaggerModule;
+            #[\\Dagger\\Attribute\\DaggerObject]
+            enum SpacedLevel
+            {
+                case \u{00A0}LOW;
+                case LOW;
+            }
+            PHP);
+        require_once $file;
+
+        try {
+            $description = Description::fromDirectory($directory);
+        } finally {
+            unlink($file);
+            rmdir($directory);
+        }
+
+        self::assertSame(["\u{00A0}LOW", 'LOW'], array_map(
+            static fn($case) => $case->name,
+            $description->enums[0]->cases,
+        ));
+        self::expectExceptionMessage('its cases \302\240LOW and LOW the same name, LOW');
+
+        DangEntrypointRenderer::renderTypes($description, 'main');
+    }
+
+    private static function enumOf(string ...$cases): Description
+    {
+        return new Description([], [new DaggerEnum(
+            'DaggerModule\\Mode',
+            '',
+            array_map(static fn($case) => new DaggerEnumCase($case, '', ''), $cases),
+        )]);
     }
 
     #[Test]
