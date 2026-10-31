@@ -9,6 +9,11 @@ type E2e {
   let clientRootModulePath: String! = fixtureRoot + "/client-root/app"
   let layeringModulePath: String! = fixtureRoot + "/layering/app"
   let rootingModulePath: String! = fixtureRoot + "/rooting/app"
+  let entrypointModulePath: String! = fixtureRoot + "/entrypoint/app"
+  let entrypointName: String! = "entrypoint-app"
+  let target: String! = "v1.0.0-beta.21"
+  let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
+  let unitTestFilter: String! = "EntrypointMetadataTest|DangEntrypointRendererTest|EngineNamingTest|CallDispatcherTest|ValueCodecTest"
 
   let assert(condition: Boolean!, message: String!): Void {
     if (condition == false) { raise message }
@@ -21,6 +26,68 @@ type E2e {
 
   let cwdOf(ws: Workspace!): String! {
     ws.cwd.trimPrefix("/").trimSuffix("/")
+  }
+
+  let assertContains(value: String!, want: String!, message: String!): Void {
+    assert(value.contains(want), message + ": " + value)
+  }
+
+  let assertNotContains(value: String!, unwanted: String!, message: String!): Void {
+    assert(value.contains(unwanted) == false, message + ": " + value)
+  }
+
+  let exists(ws: Workspace!, path: String!): Boolean! {
+    ws.directory("/", include: [path]).exists(path)
+  }
+
+  let contentsOf(ws: Workspace!, path: String!): String! {
+    ws.directory("/", include: [path]).file(path).contents
+  }
+
+  """
+  The fixture module generated from a workspace, at the workspace root.
+  """
+  let generatedEntrypoint(ws: Workspace!): Workspace! {
+    phpSdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: []).withWorkdir(".")
+  }
+
+  """
+  The module directory generated with the engine floor off, so the entrypoint
+  itself is what passes or fails on an older engine.
+  """
+  let generatedPastFloor(ws: Workspace!): Directory! {
+    phpSdk(enforceEngineFloor: false)
+      .generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: [])
+      .withWorkdir(".")
+      .directory("/" + entrypointModulePath)
+  }
+
+  let usesEntrypoint(ws: Workspace!): Boolean! {
+    phpSdk.mod(ws, path: entrypointModulePath, findUp: false).usesEntrypoint
+  }
+
+  """
+  The message generation fails with, or an empty string when it does not fail.
+  """
+  let generationError(ws: Workspace!): String! {
+    let cwd = generatedEntrypoint(ws).cwd rescue {
+      err: Error => "failed: " + err.message
+    }
+    if (cwd.hasPrefix("failed: ")) { cwd.trimPrefix("failed: ") } else { "" }
+  }
+
+  let assertRefused(ws: Workspace!, want: String!, what: String!): Void {
+    let message = generationError(ws)
+    assert(message != "", what + " should be refused")
+    assertContains(message, want, what + " was refused for the wrong reason")
+  }
+
+  let assertNoChange(ws: Workspace!, what: String!): Void {
+    assert(generatedEntrypoint(ws).changes(ws).isEmpty, what + " changed on a second generation")
+  }
+
+  let withConfig(ws: Workspace!, contents: String!): Workspace! {
+    ws.withNewFile("/" + entrypointConfigPath, contents)
   }
 
   """
@@ -80,17 +147,21 @@ type E2e {
       "generateScope did not write the module manifest",
     )
     assert(
-      generated.file("dagger-module.toml").contents.contains("engineVersion = \"v1.0.0-beta.21\"\n"),
-      "the module manifest should declare v1.0.0-beta.21, before the beta.22 API cut",
-    )
-    assert(
       contains(changes.addedPaths, layeringModulePath + "/dagger.json") == false,
       "generateScope added a dagger.json to a new module",
     )
-    assert(
-      generated.file("dagger-module.toml").contents.contains("source = \"php\""),
-      "the module manifest should select the php runtime",
+    let manifest = generated.file("dagger-module.toml").contents
+    assertContains(manifest, "source = \"./sdk/entrypoint\"", "a new module should run on the generated entrypoint")
+    assertNotContains(manifest, "[runtime]", "a new module should not keep the php runtime")
+    assertContains(
+      generated.file("sdk/entrypoint/dang.toml").contents,
+      "dagger = \"v1.0.0-beta.21\"",
+      "the entrypoint should declare v1.0.0-beta.21, before the identifier-casing cut",
     )
+    let portedNaming = generated.file("sdk/src/Module/EngineNaming.php").contents
+    assertContains(portedNaming, "Copyright (c) 2018 Ma_124", "the generated SDK should keep the strcase copyright")
+    assertContains(portedNaming, "Permission is hereby granted", "the generated SDK should keep the strcase permission notice")
+    assertContains(generated.file("sdk/LICENSE").contents, "Apache License", "the generated SDK should keep its own license")
     null
   }
 
@@ -139,6 +210,391 @@ type E2e {
 
     assert(cwdOf(generated) == layeringModulePath, "generateScope changed the workspace cwd")
     assert(generated.directory("/").changes(root).isEmpty, "a scope without a module or clients should not change")
+    null
+  }
+
+  """
+  The generated dang.toml and main.dang declare one target, at language 2.1, as
+  text: this does not show that an engine reads either. Generation keeps what the
+  user set, replaces an owned Dagger import, and refuses what it cannot preserve.
+  The cwd survives and a second generation changes nothing.
+  """
+  pub entrypointConfigCheck(ws: Workspace!): Void @check {
+    let generated = generatedEntrypoint(ws)
+    let config = contentsOf(generated, entrypointConfigPath)
+    assertContains(config, "dang = \"2.1\"", "the language should be 2.1")
+    assertContains(config, "dagger = \"" + target + "\"", "the Dagger import should declare the target")
+    assertContains(
+      contentsOf(generated, entrypointModulePath + "/sdk/entrypoint/main.dang"),
+      "\"DAGGER_CLIENT_VERSION\", \"" + target + "\"",
+      "the process should declare the version dang.toml declares",
+    )
+    assert(
+      cwdOf(phpSdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: [])) == entrypointModulePath,
+      "generateScope changed the workspace cwd",
+    )
+    assertNoChange(generated, "a generated module")
+
+    let settings = "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = true\n\n[imports.Other]\npath = \"../../other\"\n"
+    let preserved = generatedEntrypoint(withConfig(generated, settings))
+    let rewritten = contentsOf(preserved, entrypointConfigPath)
+    assertContains(rewritten, "dagger = \"" + target + "\"", "dagger = true should be replaced by the target")
+    assertContains(rewritten, "[imports.Other]", "another import should be kept")
+    assertContains(rewritten, "path = \"../../other\"", "another import's settings should be kept")
+    assertNoChange(preserved, "a module with its own settings")
+
+    let older = generatedEntrypoint(withConfig(generated, "[imports.Dagger]\ndagger = \"v1.0.0-beta.20\"\n"))
+    assertContains(contentsOf(older, entrypointConfigPath), "dagger = \"" + target + "\"", "an older version should be replaced by the target")
+    assertNotContains(contentsOf(older, entrypointConfigPath), "beta.20", "the older version should be gone")
+
+    assertRefused(withConfig(generated, "dang = \"2.0\"\n"), "declares dang = 2.0", "another language")
+    assertRefused(withConfig(generated, "[imports.Dagger]\npath = \"./dagger\"\n"), "gives the Dagger import a path", "a path on the Dagger import")
+    assertRefused(
+      withConfig(generated, "[imports.Dagger]\ndagger = true\nendpoint = \"https://example.com\"\n"),
+      "endpoint",
+      "an endpoint with a version",
+    )
+    assertRefused(
+      withConfig(generated, "[imports.Other]\npath = \"./other\"\n"),
+      "inside sdk/",
+      "an import from inside the replaced sdk/",
+    )
+    let imported = generated.withNewFile("/" + entrypointModulePath + "/sdk/entrypoint/other/main.dang", "type Other {}\n")
+    ["../../sdk/entrypoint/other", "../../sdk/lib", "../../other/../sdk", "../other"].each { path =>
+      assertRefused(
+        withConfig(imported, "[imports.Other]\npath = \"" + path + "\"\n"),
+        "inside sdk/",
+        "an import from " + path,
+      )
+    }
+    assertRefused(
+      withConfig(generated, "[imports.Other]\ndagger = \"v1.0.0-beta.20\"\n"),
+      "pins the import Other",
+      "another alias on another version",
+    )
+
+    let ancestor = entrypointModulePath + "/dang.toml"
+    assertRefused(
+      ws.withNewFile("/" + ancestor, "[imports.Other]\npath = \"./other\"\n"),
+      "applies to the entrypoint",
+      "a dang.toml above the entrypoint with settings of its own",
+    )
+    let plainAncestor = "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = true\n"
+    let beside = generatedEntrypoint(ws.withNewFile("/" + ancestor, plainAncestor))
+    assert(contentsOf(beside, ancestor) == plainAncestor, "a dang.toml above the entrypoint should be left alone")
+    assertContains(contentsOf(beside, entrypointConfigPath), target, "the entrypoint should get its own dang.toml")
+
+    let sdkAncestor = entrypointModulePath + "/sdk/dang.toml"
+    let keptSdkAncestor = generatedEntrypoint(generated.withNewFile("/" + sdkAncestor, plainAncestor))
+    assert(contentsOf(keptSdkAncestor, sdkAncestor) == plainAncestor, "a dang.toml in sdk/ should survive replacing sdk/")
+
+    let outside = generatedEntrypoint(ws.withNewFile("/" + fixtureRoot + "/entrypoint/dang.toml", "[imports.Other]\npath = \"./other\"\n"))
+    assertContains(contentsOf(outside, entrypointConfigPath), target, "a dang.toml above the module does not apply to it")
+    null
+  }
+
+  """
+  What counts as this SDK's: the entrypoint path alone does not, so another SDK's
+  entrypoint, a custom one and a stray dang.toml stay out of generation.
+  """
+  pub entrypointOwnershipCheck(ws: Workspace!): Void @check {
+    let generated = generatedEntrypoint(ws)
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let build = entrypointModulePath + "/sdk/entrypoint/build.dang"
+
+    assert(phpSdk.mod(generated, path: entrypointModulePath, findUp: false).ownsEntrypoint, "the generated entrypoint should be recognized")
+    assert(phpSdk.mod(generated, path: entrypointModulePath + "/src").rootPath == entrypointModulePath, "find-up should recognize the generated entrypoint as PHP")
+
+    let foreign = generated.withNewFile("/" + build, "type PythonModuleBuild {}\n")
+    assert(phpSdk.mod(foreign, path: entrypointModulePath, findUp: false).ownsEntrypoint == false, "another SDK's entrypoint at the same path should not be recognized")
+    assert(usesEntrypoint(foreign) == false, "another SDK's entrypoint should stay out of generation")
+    let lookup = phpSdk.mod(foreign, path: entrypointModulePath + "/src").rootPath rescue {
+      err: Error => err.message
+    }
+    assertContains(lookup, "does not use the PHP SDK", "find-up should not take another SDK's entrypoint for PHP")
+
+    let custom = generated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[entrypoint]\nkind = \"dang\"\nsource = \"./custom\"\n")
+    assert(usesEntrypoint(custom) == false, "a custom entrypoint should stay out of generation")
+
+    assertRefused(
+      ws.withNewFile("/" + entrypointConfigPath, "dang = \"2.1\"\n"),
+      "was not written by this SDK",
+      "a stray dang.toml in the entrypoint directory",
+    )
+    assertRefused(
+      ws.withNewFile("/" + entrypointModulePath + "/sdk/notes.txt", "mine\n"),
+      "is not the SDK's library",
+      "a directory of the user's at sdk/",
+    )
+    null
+  }
+
+  """
+  An eligible module moves to the entrypoint and keeps its settings. A module the
+  entrypoint cannot run keeps the runtime, and neither is dropped silently.
+  """
+  pub entrypointMigrationCheck(ws: Workspace!): Void @check {
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let legacyJson = entrypointModulePath + "/dagger.json"
+    let composer = entrypointModulePath + "/composer.json"
+    let composerText = contentsOf(ws, composer)
+
+    let migrated = generatedEntrypoint(ws)
+    let written = contentsOf(migrated, manifest)
+    assertContains(written, "source = \"./sdk/entrypoint\"", "the manifest should name the entrypoint")
+    assertNotContains(written, "engineVersion", "only a runtime reads engineVersion")
+    assertNotContains(written, "[runtime]", "the php runtime should be replaced")
+    assert(contentsOf(migrated, composer) == composerText, "Composer settings should not change")
+    assert(exists(migrated, entrypointModulePath + "/composer.lock"), "the lock should be written")
+    assert(exists(migrated, entrypointModulePath + "/sdk/generated/Client.php"), "the client should be generated")
+    assert(exists(migrated, entrypointModulePath + "/sdk/bin/dagger-module"), "the call command should be written")
+    assert(exists(migrated, entrypointModulePath + "/sdk/tests") == false, "the SDK's tests are not for modules")
+
+    let fromJson = ws
+      .withoutFile("/" + manifest)
+      .withNewFile("/" + legacyJson, "{\"name\": \"entrypoint-app\", \"engineVersion\": \"v1.0.0-0\", \"sdk\": {\"source\": \"php\"}}\n")
+    let migratedJson = generatedEntrypoint(fromJson)
+    assertContains(contentsOf(migratedJson, manifest), "source = \"./sdk/entrypoint\"", "a dagger.json module should move to the entrypoint")
+    assert(exists(migratedJson, legacyJson) == false, "the dagger.json should be gone")
+
+    let staleClass = migrated.withNewFile("/" + entrypointModulePath + "/sdk/generated/Obsolete.php", "<?php\n")
+    assert(
+      exists(generatedEntrypoint(staleClass), entrypointModulePath + "/sdk/generated/Obsolete.php") == false,
+      "a client class the schema no longer has should go",
+    )
+
+    let nestedRule = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/.gitignore", "/sdk/generated/\nbin/\n"))
+    let nestedRules = contentsOf(nestedRule, entrypointModulePath + "/.gitignore")
+    assertContains(nestedRules, "!/sdk/**\n", "a rule for a directory under sdk/ should be overridden")
+    let tracked = nestedRule.directory(
+      "/" + entrypointModulePath,
+      include: ["sdk/generated/Client.php", "sdk/bin/dagger-module"],
+      gitignore: true,
+    )
+    assert(tracked.exists("sdk/generated/Client.php"), "the client should be visible to Git")
+    assert(tracked.exists("sdk/bin/dagger-module"), "the call command should be visible to Git")
+    assertNoChange(nestedRule, "a module with rules under sdk/")
+
+    let descendantsOnly = "/sdk/\n!/sdk/**\n/vendor/\n"
+    let parentHidden = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/.gitignore", descendantsOnly))
+    assertContains(contentsOf(parentHidden, entrypointModulePath + "/.gitignore"), descendantsOnly + "!/sdk/\n!/sdk/**\n", "sdk/ itself should be re-included")
+    assert(
+      parentHidden.directory("/" + entrypointModulePath, include: ["sdk/bin/dagger-module"], gitignore: true).exists("sdk/bin/dagger-module"),
+      "the call command should be visible to Git under an excluded parent",
+    )
+    assertNoChange(parentHidden, "a module with a re-included sdk/")
+
+    let ignored = "*.log\n/sdk\n/vendor\n"
+    let visible = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/.gitignore", ignored))
+    let rules = contentsOf(visible, entrypointModulePath + "/.gitignore")
+    assert(rules.hasPrefix(ignored), "the user's ignore rules should stay as they are: " + rules)
+    assertContains(rules, "!/sdk/\n!/sdk/**\n", "sdk/ should be visible to Git")
+    assertNoChange(visible, "a module with its ignore rules")
+    assertContains(contentsOf(migrated, entrypointModulePath + "/.gitignore"), "/vendor/", "vendor/ should be ignored")
+
+    # findUp reads a host workspace from the host, so the marker needs a workspace
+    # made of the directory that holds it.
+    let locked = ws.directory("/").withNewFile(entrypointModulePath + "/.dagger-php-sdk-skip-generate", "").asWorkspace
+    assert(phpSdk.mod(locked, path: entrypointModulePath, findUp: false).generate.isEmpty, "the skip marker should keep generation out")
+
+    let lockAbove = ws.directory("/").withNewFile(fixtureRoot + "/entrypoint/.dagger-php-sdk-skip-generate", "").asWorkspace
+    assert(phpSdk.mod(lockAbove, path: entrypointModulePath, findUp: false).skipGenerate, "a marker above the module should keep generation out")
+
+    let fromRoot = phpSdk.mod(ws, path: entrypointModulePath, findUp: false).generate
+    assert(contains(fromRoot.addedPaths, entrypointModulePath + "/sdk/entrypoint/main.dang"), "generating from the root should write the entrypoint")
+    let fromModule = phpSdk.mod(ws.withWorkdir(entrypointModulePath), path: ".").generate
+    assert(contains(fromModule.addedPaths, "sdk/entrypoint/main.dang"), "generating from the module should write the entrypoint relative to it")
+
+    let kept = "name = \"entrypoint-app\"\nengineVersion = \"v1.0.0-beta.21\"\n\n[runtime]\nsource = \"php\"\n"
+    let dependency = kept + "\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n"
+    assert(usesEntrypoint(ws), "the fixture should be eligible")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, dependency)) == false, "a module with dependencies keeps the runtime")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"src\"]\n" + kept)) == false, "a module with include rules keeps the runtime")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept)) == false, "a module with another source keeps the runtime")
+    assert(usesEntrypoint(ws.withoutFile("/" + composer)) == false, "a module without a composer.json keeps the runtime")
+
+    let externalRepository = composerText.replace("\"./sdk\"", "\"../sdk\"")
+    assert(usesEntrypoint(ws.withNewFile("/" + composer, externalRepository)) == false, "a Composer path outside the module keeps the runtime")
+    let externalAutoload = composerText.replace("\"src/\"", "\"../src/\"")
+    assert(usesEntrypoint(ws.withNewFile("/" + composer, externalAutoload)) == false, "an autoload path outside the module keeps the runtime")
+    let insideAutoload = composerText.replace("\"src/\"", "\"./lib/../src/\"")
+    assert(usesEntrypoint(ws.withNewFile("/" + composer, insideAutoload)), "a path that stays in the module should not count as outside")
+    assert(usesEntrypoint(ws.withNewFile("/" + composer, composerText.replace("\"platform\"", "\"vendor-dir\": \"deps\", \"platform\""))) == false, "a moved vendor-dir keeps the runtime")
+
+    let entrypointTable = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
+    assert(
+      usesEntrypoint(migrated.withNewFile("/" + manifest, dependency + entrypointTable)) == false,
+      "an entrypoint with dependencies and a runtime reads as a runtime manifest",
+    )
+    assertRefused(
+      migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n" + entrypointTable),
+      "without a runtime",
+      "an entrypoint with dependencies and no runtime",
+    )
+    assertRefused(
+      migrated.withNewFile("/" + composer, externalRepository),
+      "cannot keep its generated entrypoint",
+      "a generated entrypoint with a Composer path outside the module",
+    )
+    assertRefused(
+      migrated.withNewFile("/" + manifest, "include = [\"src\"]\nname = \"entrypoint-app\"\n" + entrypointTable),
+      "cannot keep its generated entrypoint",
+      "a generated entrypoint with include rules",
+    )
+
+    let fat = kept + entrypointTable
+    let keptRuntime = contentsOf(generatedEntrypoint(migrated.withNewFile("/" + manifest, fat)), manifest)
+    assertContains(keptRuntime, "[runtime]", "a runtime named beside a generated entrypoint should be kept for older engines")
+    null
+  }
+
+  """
+  The dagger CLI of the engine running the check, from the release's image, with
+  the image's git. The image's entrypoint would start an engine, so it is removed.
+  """
+  let callClient: Container! {
+    container
+      .from("registry.dagger.io/engine:" + (version.split("+")[0] ?? version))
+      .withoutEntrypoint
+  }
+
+  let call(ctr: Container!, args: [String!]!): String! {
+    ctr.withExec(["dagger", "-m", "."] + args, experimentalPrivilegedNesting: true).stdout
+  }
+
+  """
+  The generated entrypoint answers calls from a local and from a Git source:
+  constructor, state, enums, nested and empty lists, IDs, omitted values, a check,
+  and an error that keeps its message.
+  """
+  pub generatedEntrypointCallCheck(ws: Workspace!): Void @check {
+    assertCalls(generatedEntrypoint(ws).directory("/" + entrypointModulePath))
+
+    assertTemplateCalls(
+      phpSdk.generateScope(ws.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
+        .withWorkdir(".")
+        .directory("/" + layeringModulePath),
+    )
+  }
+
+  """
+  The generated entrypoint on the engine running this check, which is the only
+  engine it uses: the check passing on a release means the entrypoint supports
+  that release. Run it on each release in turn to find the floor. It also holds the
+  SDK's refusal to the floor it declares.
+  """
+  pub entrypointFloorCheck(ws: Workspace!): Void @check {
+    let generated = generationError(ws)
+    if (phpSdk.belowEngineFloor) {
+      assertContains(generated, "needs an engine from", "the SDK should refuse " + version)
+    } else {
+      assert(generated == "", "the SDK should accept " + version + ": " + generated)
+    }
+    assertCalls(generatedPastFloor(ws))
+    assertTemplateCalls(
+      phpSdk(enforceEngineFloor: false)
+        .generateScope(ws.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
+        .withWorkdir(".")
+        .directory("/" + layeringModulePath),
+    )
+  }
+
+  """
+  The default new-module path: a module from the minimal template has neither
+  fields nor a constructor of its own, and calls the engine from its function.
+  """
+  let assertTemplateCalls(module: Directory!): Void {
+    let templated = callClient
+      .withDirectory("/work/app", module)
+      .withWorkdir("/work/app")
+      .withExec(["git", "init", "--quiet"])
+    assertContains(call(templated, ["call", "container-echo", "--string-arg", "from the template", "stdout"]), "from the template", "a main object without a constructor of its own should answer")
+    null
+  }
+
+  let assertCalls(module: Directory!): Void {
+    let local = callClient
+      .withDirectory("/work/app", module)
+      .withWorkdir("/work/app")
+      .withExec(["git", "init", "--quiet"])
+
+    assertContains(call(local, ["call", "greet"]), "hello world", "the omitted argument should take its default")
+    assertContains(call(local, ["call", "--greeting", "hi", "greet", "--name", "you"]), "hi you", "the constructor and a given argument should reach the function")
+    assertContains(call(local, ["call", "--levels", "Low,High", "last-level"]), "HIGH", "a list of enums should reach the state")
+    assertContains(call(local, ["call", "with-level", "--level", "Low", "last-level"]), "LOW", "an enum should survive a call through the state")
+    # On v1.0.0-beta.21 the CLI printed this nested list's elements as opaque
+    # values, not its strings, so only the shape can be read back here.
+    let grid = call(local, ["call", "grid", "--json"]).replaceMatches("\\s", "")
+    assert(grid.containsMatch("^\\[\\[\"[^\"]+\",\"[^\"]+\"\\],\\[\\]\\]$"), "a nested list should keep its shape: " + grid)
+    assertContains(call(local, ["call", "commas", "--json"]), "a,b", "a comma should stay inside its element")
+    assertContains(call(local, ["call", "nothing", "--json"]), "[]", "an empty list should stay a list")
+    assertContains(call(local, ["call", "entries", "--dir", "./src"]), "EntrypointApp.php", "a Directory ID should load")
+    local.withExec(["dagger", "-m", ".", "check", "self-check"], experimentalPrivilegedNesting: true).sync
+
+    let failure = local
+      .withExec(["dagger", "-m", ".", "call", "fail"], experimentalPrivilegedNesting: true, expect: ReturnType.FAILURE)
+      .stderr
+    assertContains(failure, "the fixture failed on purpose", "the function's error should reach the caller")
+
+    let server = container
+      .from("alpine:3.22")
+      .withoutEntrypoint
+      .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
+      .withDirectory("/srv/repo", module)
+      .withWorkdir("/srv/repo")
+      .withExec(["git", "init", "-q", "-b", "main"])
+      .withExec(["git", "add", "-A"])
+      .withExec(["git", "-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-q", "-m", "generated module"])
+      .withExec(["git", "clone", "-q", "--bare", ".", "/srv/repo.git"])
+      .withExposedPort(9418)
+      .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
+      .asService
+    # The engine takes a Git ref whose host has no dot for a Go import path and
+    # refuses it, so the ref names the server by its full name, in the session
+    # domain that resolv.conf searches last.
+    let ref = "git://" + server.hostname + ".$(awk '/^search/ {print $NF}' /etc/resolv.conf)/repo.git@main"
+    let remote = callClient
+      .withServiceBinding(server.hostname, server)
+      .withExec(["sh", "-c", "dagger -m \"" + ref + "\" call greet"], experimentalPrivilegedNesting: true)
+      .stdout
+    assertContains(remote, "hello world", "a module from a Git source should answer")
+    null
+  }
+
+  """
+  dagger/dagger#14902, which is open, takes a module's version from its dang.toml,
+  and the version the raw source reports tells that apart where the view cannot:
+  beta.20 and beta.21 share one view. An older engine ignores the file, so this
+  has nothing to assert there.
+  """
+  pub entrypointEngineVersionCheck(ws: Workspace!): Void @check {
+    let release = version.split("+")[0] ?? version
+    let number = release.trimPrefix("v1.0.0-beta.")
+    let predates = number != release and ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22"].contains(number)
+    if (predates == false) {
+      let generated = generatedEntrypoint(ws)
+      let source = generated.moduleSource("/" + entrypointModulePath)
+      assert(source.engineVersion == target, "the module should report the dang.toml version, not " + source.engineVersion)
+      let declared = withConfig(generated, "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = \"v1.0.0-beta.20\"\n")
+      let other = declared.moduleSource("/" + entrypointModulePath).engineVersion
+      assert(other == "v1.0.0-beta.20", "the module should follow the dang.toml version, not " + other)
+    }
+    null
+  }
+
+  """
+  The unit tests of the entrypoint support, against a client of the target schema.
+  """
+  pub sdkUnitCheck(ws: Workspace!): Void @check {
+    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
+    mod.phpContainer
+      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
+      .withWorkdir("/sdk")
+      .withExec(["composer", "install"])
+      .withMountedFile("/schema.json", mod.clientSchema)
+      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
+      .withExec(["vendor/bin/phpunit", "--filter", unitTestFilter])
+      .sync
     null
   }
 }
