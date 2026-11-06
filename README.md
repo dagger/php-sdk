@@ -163,9 +163,9 @@ may reject the import.
 
 The generated files carry the same version in two channels:
 
-- `dang.toml`: no release up to `v1.0.0-beta.22` reads it, because those engines copy
-  only `.dang` files to evaluate an entrypoint. dagger/dagger#14902, which is open,
-  reads it to select the module's API view.
+- `dang.toml`: dagger/dagger#14902 selects the module's API view from its `Dagger`
+  import. The change is on dagger/dagger `main` as of `7e9eaacc`, and
+  `v1.0.0-beta.25` predates it. Its runtime effect is not verified by this SDK's checks.
 - `DAGGER_CLIENT_VERSION` on the exec that runs the module: dagger/dagger#14881 makes
   the engine read it. `v1.0.0-beta.22` is the first release with that change.
 
