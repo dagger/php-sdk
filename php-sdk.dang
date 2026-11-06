@@ -22,6 +22,13 @@ type PhpSdk {
   pub template: String! = "minimal"
 
   """
+  The engine release a module's generated code targets: the floor or later, and
+  the release this SDK generates for or earlier. Empty takes the release this SDK
+  generates for.
+  """
+  pub targetVersion: String! = ""
+
+  """
   Find the PHP client root containing the workspace cwd: the directory of the
   nearest composer.json, relative to the workspace root. A module's vendored
   SDK carries its own composer.json under sdk/, so the module owning it answers
@@ -45,10 +52,12 @@ type PhpSdk {
   """
   Generate one SDK scope: the module at the workspace cwd, when the scope is a
   module. A scope without a module config is first seeded from the `template`
-  setting, keeping the files already there, and given a dagger-module.toml.
-  Module clients are not generated yet.
+  setting, keeping the files already there, and given a dagger-module.toml. A
+  self-contained module then moves to the entrypoint this SDK generates; see
+  Mod.usesEntrypoint. Module clients are not generated yet.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
+    checkEngine
     if (clients.length > 0) {
       raise "php-sdk does not generate module clients yet"
     }
@@ -61,6 +70,7 @@ type PhpSdk {
       # the root and the cwd restored afterwards: the engine rejects a result
       # whose cwd is not the scope.
       let rooted = ws.withWorkdir(".")
+      let target = targetRelease("module \"" + name + "\"")
       let selectedTemplate = if (template == "") { "minimal" } else { template }
       let initialized = if (hasModuleConfig(ws, scope)) {
         rooted
@@ -69,27 +79,144 @@ type PhpSdk {
       } else {
         sdkHelpers.moduleManifest
           .withName(name: name)
-          .withLegacyRuntime(runtime: "php", engineVersion: targetEngineVersion)
+          .withLegacyRuntime(runtime: "php", engineVersion: target)
           .generate(
             rooted.withDirectory(scope, renderedTemplate(name, selectedTemplate)).withWorkdir(scope),
             legacyJson: false,
           )
           .withWorkdir(".")
       }
-      let module = Mod(rootPath: scope, ws: initialized, skipGenerateFilename: skipGenerateFilename)
-      initialized.withChanges(module.generate).withWorkdir(scope)
+      targetedMod(scope, initialized, name, "module \"" + name + "\"").generated.withWorkdir(scope)
     }
   }
 
   """
-  The engine API version a new module declares. It stays before
-  v1.0.0-beta.22, which renames core API fields and changes module naming,
-  until the PHP codegen is ported to those rules: declaring the running engine
-  would put new modules past that cut as soon as engines reach it. Every
-  v1.0.0 prerelease up to beta.21 shares one API view, and released engines
-  compare base versions, so beta.12 and later engines load it alike.
+  The engine API version a new module declares: the last release before the
+  identifier-casing cut, which dagger/dagger gates at v1.0.0-beta.26 and which
+  renames core API fields and changes module naming. It stays before that cut until
+  the PHP codegen is ported to those rules. Released engines compare base versions,
+  so older engines load it. The module's client schema, its DAGGER_CLIENT_VERSION
+  and its dang.toml use this one value. Moving it across that cut also means
+  checking the naming that sdk/src/Module/EngineNaming.php mirrors.
   """
-  let targetEngineVersion: String! = "v1.0.0-beta.21"
+  let targetEngineVersion: String! = "v1.0.0-beta.25"
+
+  """
+  The oldest release the generated entrypoint passed on, for modules targeting
+  v1.0.0-beta.21. It has not run again with the current target.
+  """
+  let floorEngineVersion: String! = "v1.0.0-beta.17"
+
+  """
+  Whether the running engine is below the floor. Released engines compare base
+  versions, so the manifest's engineVersion does not keep an older v1.0.0
+  prerelease out. A dev build or a later release is not below it.
+  """
+  let belowEngineFloor: Boolean! {
+    let prefix = "v1.0.0-beta."
+    let release = version.split("+")[0] ?? version
+    let beta = release.trimPrefix(prefix)
+    let floor = floorEngineVersion.trimPrefix(prefix)
+    release.hasPrefix("v0.") or release.hasPrefix("v1.0.0-0") or
+      (beta != release and beta.containsMatch("^[0-9]+$") and beta.padLeft(6) < floor.padLeft(6))
+  }
+
+  let checkEngine: Void {
+    if (belowEngineFloor) {
+      raise "php-sdk needs an engine from " + floorEngineVersion + ", and this one is " + version + ": upgrade the engine"
+    }
+    null
+  }
+
+  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion): Mod! {
+    Mod(
+      rootPath: path,
+      ws: ws,
+      skipGenerateFilename: skipGenerateFilename,
+      targetEngineVersion: target,
+      givenName: name,
+    )
+  }
+
+  """
+  The module at path, generating for targetRelease. A pin on a module that keeps
+  the PHP runtime is refused: the engine regenerates that module for its
+  manifest's engineVersion.
+  """
+  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!): Mod! {
+    let target = targetRelease(subject)
+    let mod = modAt(path, ws, name, target)
+    if (targetVersion != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
+      raise subject + " pins targetVersion " + target + ", which applies to the generated entrypoint only: this module keeps the PHP runtime, which generates for the engineVersion of its manifest. Remove targetVersion from the scope's settings in dagger.toml"
+    }
+    mod
+  }
+
+  """
+  The release a module generates for. A targetVersion this SDK cannot generate for
+  is refused before anything is written.
+  """
+  let targetRelease(subject: String!): String! {
+    if (targetVersion == "") { return targetEngineVersion }
+    let fix = "Set targetVersion between " + floorEngineVersion + " and " + targetEngineVersion + " in the scope's settings in dagger.toml, or remove it"
+    if (targetVersion.containsMatch(Regexp(releasePattern)) == false) {
+      raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + targetEngineVersion + ". " + fix
+    }
+    let bare = targetVersion.split("+")[0] ?? targetVersion
+    let target = if (bare.hasPrefix("v")) { bare } else { "v" + bare }
+    if (releasePrecedes(target, floorEngineVersion)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the PHP SDK cannot generate for: it is below " + floorEngineVersion + ", the oldest engine this SDK runs on. " + fix
+    }
+    if (releasePrecedes(targetEngineVersion, target)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the PHP SDK cannot generate for: it targets " + targetEngineVersion + " at most. " + fix + ", or install the SDK release built for " + target
+    }
+    target
+  }
+
+  """v?MAJOR.MINOR.PATCH, then an optional prerelease and build, as in the Go SDK."""
+  let releasePattern: String! = "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+
+  """Semver precedence; false when either is not a release, so an unreadable version passes."""
+  let releasePrecedes(a: String!, b: String!): Boolean! {
+    let pattern = Regexp(releasePattern)
+    let ma = a.match(pattern)
+    if (ma == null) { return false }
+    let mb = b.match(pattern)
+    if (mb == null) { return false }
+    let ca = ma.captures
+    let cb = mb.captures
+    let coreA = [ca[0] ?? "", ca[1] ?? "", ca[2] ?? ""]
+    let coreB = [cb[0] ?? "", cb[1] ?? "", cb[2] ?? ""]
+    if (identifiersPrecede(coreA, coreB, 0)) { return true }
+    if (identifiersPrecede(coreB, coreA, 0)) { return false }
+    let preA = ca[3] ?? ""
+    let preB = cb[3] ?? ""
+    if (preA == "") {
+      false
+    } else if (preB == "") {
+      true
+    } else {
+      identifiersPrecede(preA.split("."), preB.split("."), 0)
+    }
+  }
+
+  """Numbers by value before words, words by ASCII, a prefix first."""
+  let identifiersPrecede(a: [String!]!, b: [String!]!, i: Int!): Boolean! {
+    if (i >= a.length) { return i < b.length }
+    if (i >= b.length) { return false }
+    let x = a[i] ?? ""
+    let y = b[i] ?? ""
+    if (x == y) { return identifiersPrecede(a, b, i + 1) }
+    let xNumber = x.containsMatch(Regexp("^[0-9]+$"))
+    let yNumber = y.containsMatch(Regexp("^[0-9]+$"))
+    if (xNumber and yNumber) {
+      let xDigits = x.split("").length
+      let yDigits = y.split("").length
+      if (xDigits == yDigits) { x < y } else { xDigits < yDigits }
+    } else {
+      xNumber or (yNumber == false and x < y)
+    }
+  }
 
   """
   Whether a module config exists in a workspace-root-relative directory.
@@ -138,6 +265,7 @@ type PhpSdk {
   When `findUp` is true, `path` may point inside the module.
   """
   pub mod(ws: Workspace!, path: String! = ".", findUp: Boolean! = true): Mod! {
+    checkEngine
     let modPath = if (findUp) {
       # Pick the nearest enclosing config regardless of filename ordering.
       let foundConfigPath = moduleConfigFilenames.reduce(null) { nearest, filename =>
@@ -159,11 +287,7 @@ type PhpSdk {
       normalizePath(path)
     }
 
-    Mod(
-      rootPath: modPath,
-      ws: ws,
-      skipGenerateFilename: skipGenerateFilename,
-    )
+    targetedMod(modPath, ws, "", "module at " + modPath)
   }
 
   """
@@ -179,9 +303,15 @@ type PhpSdk {
   }
 
   """
-  Whether a module config selects the PHP runtime.
+  Whether a module config selects the PHP runtime or the entrypoint this SDK
+  generates.
   """
   let isPhpConfig(ws: Workspace!, configPath: String!): Boolean! {
+    let dir = configPath.split("/").dropLast(1).join("/")
+    selectsPhpRuntime(ws, configPath) or modAt(if (dir == "") { "." } else { dir }, ws, "").ownsEntrypoint
+  }
+
+  let selectsPhpRuntime(ws: Workspace!, configPath: String!): Boolean! {
     let pattern = if (configPath.trimSuffix("dagger-module.toml") != configPath) {
       tomlConfigPattern
     } else {
