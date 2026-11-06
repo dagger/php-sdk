@@ -14,7 +14,7 @@ module clients, which this SDK does not generate yet; see
 The PHP library and codegen live under [`sdk/`](./sdk), vendored from
 dagger/dagger; [`sdk/VENDOR.md`](./sdk/VENDOR.md) records the commit. Generation
 writes them into each module with a client generated against
-`v1.0.0-beta.21`.
+`v1.0.0-beta.25`.
 
 ## Engine requirement
 
@@ -26,8 +26,9 @@ The check fails on `v1.0.0-beta.16`. That engine sends an enum argument by its c
 name, `LOW` for `case Low`, which PHP cannot read. dagger/dagger
 [`67f0790ef5`](https://github.com/dagger/dagger/commit/67f0790ef53d1af013c7191eb3b730d38b93ab33)
 fixes this. The check stops at that failure, so other modules on that release are
-untested and not supported. Modules still target `v1.0.0-beta.21`: the floor only says
-which engines the SDK and the entrypoints it generates run on.
+untested and not supported. Modules target `v1.0.0-beta.25`: the floor only says
+which engines the SDK and the entrypoints it generates run on. Those floor results were
+for modules targeting `v1.0.0-beta.21`, and have not run again for `v1.0.0-beta.25`.
 
 Earlier versions of this module documented `v1.0.0-beta.12`. On an older engine,
 `dagger generate` and `dagger module init` now stop with a message that names the
@@ -137,7 +138,7 @@ applies. Remove that rule yourself.
 ### dang.toml
 
 The SDK manages the Dagger version in `sdk/entrypoint/dang.toml`, and sets it to the
-version the module's client is generated against, `v1.0.0-beta.21`. Generation
+version the module's client is generated against, `v1.0.0-beta.25`. Generation
 replaces `dagger = true` or an older version on the `Dagger` import, requires
 `dang = "2.1"`, and keeps every other setting. Comments and formatting are lost, and
 keys are written in alphabetical order.
@@ -169,10 +170,10 @@ The generated files carry the same version in two channels:
 - `DAGGER_CLIENT_VERSION` on the exec that runs the module: dagger/dagger#14881 makes
   the engine read it. `v1.0.0-beta.22` is the first release with that change.
 
-The version stays `v1.0.0-beta.21` until the PHP codegen is ported to the
-identifier-casing rules. The release of that cut is not decided. Every v1.0.0
-prerelease up to `v1.0.0-beta.21` shares one API view, the view the client is generated
-against, and `v1.0.0-beta.22` is the first with a view of its own.
+The version stays `v1.0.0-beta.25`, the last release before the identifier-casing cut,
+until the PHP codegen is ported to those rules. dagger/dagger gates the cut at
+`v1.0.0-beta.26`. From `v1.0.0-beta.22`, each release has an API view of its own, and
+the client is generated against the `v1.0.0-beta.25` view.
 
 Passing checks on a released engine show what generation writes and that calls work.
 They do not show that `dang.toml` selects a view. No check here shows that

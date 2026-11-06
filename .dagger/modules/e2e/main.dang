@@ -11,7 +11,7 @@ type E2e {
   let rootingModulePath: String! = fixtureRoot + "/rooting/app"
   let entrypointModulePath: String! = fixtureRoot + "/entrypoint/app"
   let entrypointName: String! = "entrypoint-app"
-  let target: String! = "v1.0.0-beta.21"
+  let target: String! = "v1.0.0-beta.25"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
   let unitTestFilter: String! = "EntrypointMetadataTest|DangEntrypointRendererTest|EngineNamingTest|CallDispatcherTest|ValueCodecTest"
 
@@ -155,8 +155,8 @@ type E2e {
     assertNotContains(manifest, "[runtime]", "a new module should not keep the php runtime")
     assertContains(
       generated.file("sdk/entrypoint/dang.toml").contents,
-      "dagger = \"v1.0.0-beta.21\"",
-      "the entrypoint should declare v1.0.0-beta.21, before the identifier-casing cut",
+      "dagger = \"v1.0.0-beta.25\"",
+      "the entrypoint should declare v1.0.0-beta.25, before the identifier-casing cut",
     )
     let portedNaming = generated.file("sdk/src/Module/EngineNaming.php").contents
     assertContains(portedNaming, "Copyright (c) 2018 Ma_124", "the generated SDK should keep the strcase copyright")

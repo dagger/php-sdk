@@ -1,14 +1,11 @@
 # Vendored PHP library
 
 `src/`, `scripts/`, `tests/`, `composer.json`, `composer.lock`, `LICENSE` and
-`phpunit.xml.dist` come from `sdk/php` in dagger/dagger at commit
-`2b5e3a9671a5957a76e757d8b02ecf78e2d953ab`. The `v1.0.0-beta.21` snapshot of
-that library has no enum registration, which this SDK needs.
+`phpunit.xml.dist` come from `sdk/php` in dagger/dagger at `v1.0.0-beta.25`,
+commit `a45241b20a5e07fbfc5954479ef0b61da843499c`.
 
 Local changes to the vendored files:
 
-- `src/Connection/version.php` declares `1.0.0-beta.21`, the engine version this
-  SDK targets, instead of `1.0.0-beta.22`.
 - `src/Attribute/ListOfType.php` also targets properties. `DaggerField` already
   reads it from a property, and instantiating it there fails without this target.
 - `src/Attribute/Doc.php` also targets properties, for the same reason.
@@ -21,8 +18,10 @@ Local changes to the vendored files:
 
 Files this repository adds, which have no counterpart in dagger/dagger:
 
-- `src/Module/`, `bin/dagger-module`, `tests/Unit/Module/`, `.gitignore` and this
-  file.
+- `src/Module/`, `bin/dagger-module`, `tests/Unit/Module/` and this file.
+
+`.gitignore` replaces the upstream one: it ignores `vendor/`, `generated/` and `.cache/`,
+not the upstream tree's tooling files.
 
 `src/Module/EngineNaming.php` ports part of
 [iancoleman/strcase](https://github.com/iancoleman/strcase) v0.3.0, and keeps that

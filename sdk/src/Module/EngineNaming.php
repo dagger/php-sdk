@@ -47,8 +47,9 @@ final readonly class EngineNaming
      * The name the engine gives an enum member on the API views before the
      * identifier-casing cut, which PhpSdk.targetEngineVersion keeps modules on.
      * This follows gqlEnumMemberName in dagger/dagger core/gqlformat.go, identical
-     * at beta.17, beta.21 and beta.22, and ToScreamingSnake in strcase v0.3.0: a
-     * rule that only approximates them refuses valid enums or misses collisions.
+     * at beta.17, beta.21, beta.22 and beta.25, and ToScreamingSnake in strcase
+     * v0.3.0: a rule that only approximates them refuses valid enums or misses
+     * collisions.
      * Check it again when that target crosses the cut or the engine's naming changes.
      *
      * The input is a PHP case name, [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*. Bytes

@@ -90,17 +90,15 @@ type PhpSdk {
   }
 
   """
-  The engine API version a new module declares. It stays before the
-  identifier-casing cut, whose release is not decided and which renames core API
-  fields and changes module naming, until the PHP codegen is ported to those
-  rules: declaring the running engine would put new modules past that cut as soon
-  as engines reach it. Every v1.0.0 prerelease up to beta.21 shares one API view,
-  and released engines compare base versions, so older engines load it alike. The
-  module's client schema, its DAGGER_CLIENT_VERSION and its dang.toml use this one
-  value. Moving it across that cut also means checking the naming that
-  sdk/src/Module/EngineNaming.php mirrors.
+  The engine API version a new module declares: the last release before the
+  identifier-casing cut, which dagger/dagger gates at v1.0.0-beta.26 and which
+  renames core API fields and changes module naming. It stays before that cut until
+  the PHP codegen is ported to those rules. Released engines compare base versions,
+  so older engines load it. The module's client schema, its DAGGER_CLIENT_VERSION
+  and its dang.toml use this one value. Moving it across that cut also means
+  checking the naming that sdk/src/Module/EngineNaming.php mirrors.
   """
-  let targetEngineVersion: String! = "v1.0.0-beta.21"
+  let targetEngineVersion: String! = "v1.0.0-beta.25"
 
   """
   The oldest release the generated entrypoint passes on, by the e2e module's
