@@ -47,19 +47,8 @@ type E2e {
   """
   The fixture module generated from a workspace, at the workspace root.
   """
-  let generatedEntrypoint(ws: Workspace!): Workspace! {
-    phpSdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: []).withWorkdir(".")
-  }
-
-  """
-  The module directory generated with the engine floor off, so the entrypoint
-  itself is what passes or fails on an older engine.
-  """
-  let generatedPastFloor(ws: Workspace!): Directory! {
-    phpSdk(enforceEngineFloor: false)
-      .generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: [])
-      .withWorkdir(".")
-      .directory("/" + entrypointModulePath)
+  let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk): Workspace! {
+    sdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: []).withWorkdir(".")
   }
 
   let usesEntrypoint(ws: Workspace!): Boolean! {
@@ -69,8 +58,8 @@ type E2e {
   """
   The message generation fails with, or an empty string when it does not fail.
   """
-  let generationError(ws: Workspace!): String! {
-    let cwd = generatedEntrypoint(ws).cwd rescue {
+  let generationError(ws: Workspace!, sdk: PhpSdk! = phpSdk): String! {
+    let cwd = generatedEntrypoint(ws, sdk).cwd rescue {
       err: Error => "failed: " + err.message
     }
     if (cwd.hasPrefix("failed: ")) { cwd.trimPrefix("failed: ") } else { "" }
@@ -478,25 +467,33 @@ type E2e {
   }
 
   """
-  The generated entrypoint on the engine running this check, which is the only
-  engine it uses: the check passing on a release means the entrypoint supports
-  that release. Run it on each release in turn to find the floor. It also holds the
-  SDK's refusal to the floor it declares.
+  A pinned targetVersion reaches dang.toml and the entrypoint's
+  DAGGER_CLIENT_VERSION through generateScope and a direct mod, and stays there
+  on a second generation. A release later than the SDK's target is refused on
+  both paths, and so is a pin on a module that keeps the runtime.
   """
-  pub entrypointFloorCheck(ws: Workspace!): Void @check {
-    let generated = generationError(ws)
-    if (phpSdk.belowEngineFloor) {
-      assertContains(generated, "needs an engine from", "the SDK should refuse " + version)
-    } else {
-      assert(generated == "", "the SDK should accept " + version + ": " + generated)
+  pub targetVersionCheck(ws: Workspace!): Void @check {
+    let pinned = "v1.0.0-beta.24"
+    let sdk = phpSdk(targetVersion: pinned)
+    let generated = generatedEntrypoint(ws, sdk)
+    let direct = ws.withChanges(sdk.mod(ws, path: entrypointModulePath, findUp: false).generate)
+    [generated, direct].each { out =>
+      assertContains(contentsOf(out, entrypointConfigPath), "dagger = \"" + pinned + "\"", "dang.toml should declare the pinned target")
+      assertContains(
+        contentsOf(out, entrypointModulePath + "/sdk/entrypoint/main.dang"),
+        "\"DAGGER_CLIENT_VERSION\", \"" + pinned + "\"",
+        "the entrypoint should declare the pinned target",
+      )
     }
-    assertCalls(generatedPastFloor(ws))
-    assertTemplateCalls(
-      phpSdk(enforceEngineFloor: false)
-        .generateScope(ws.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
-        .withWorkdir(".")
-        .directory("/" + layeringModulePath),
-    )
+    assert(generatedEntrypoint(generated, sdk).changes(generated).isEmpty, "a second pinned generation changed the module")
+    let later = phpSdk(targetVersion: "v1.0.0-beta.26")
+    let refusal = "pins targetVersion v1.0.0-beta.26, which this release of the PHP SDK cannot generate for"
+    assertContains(generationError(ws, later), refusal, "a later release should be refused")
+    let directRefused = later.mod(ws, path: entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
+    assertContains(directRefused, refusal, "a later release should be refused on a direct mod")
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let kept = generationError(ws.withNewFile("/" + manifest, "include = [\"src\"]\n" + contentsOf(ws, manifest)), sdk)
+    assertContains(kept, "applies to the generated entrypoint only", "a pin on a module that keeps the runtime should be refused")
   }
 
   """

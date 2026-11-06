@@ -18,14 +18,13 @@ writes them into each module with a client generated against
 
 ## Engine requirement
 
-This module needs an engine from `v1.0.0-beta.17`, the oldest release the e2e module's
-`entrypoint-floor-check` passes on, including PHP's ordinary mixed-case enums. That check
-tests the engine that runs it.
+This module needs an engine from `v1.0.0-beta.17`, the oldest release the generated
+entrypoint passed on, including PHP's ordinary mixed-case enums.
 
-The check fails on `v1.0.0-beta.16`. That engine sends an enum argument by its canonical
+The entrypoint failed on `v1.0.0-beta.16`. That engine sends an enum argument by its canonical
 name, `LOW` for `case Low`, which PHP cannot read. dagger/dagger
 [`67f0790ef5`](https://github.com/dagger/dagger/commit/67f0790ef53d1af013c7191eb3b730d38b93ab33)
-fixes this. The check stops at that failure, so other modules on that release are
+fixes this. The run stopped at that failure, so other modules on that release are
 untested and not supported. Modules target `v1.0.0-beta.25`: the floor only says
 which engines the SDK and the entrypoints it generates run on. Those floor results were
 for modules targeting `v1.0.0-beta.21`, and have not run again for `v1.0.0-beta.25`.
@@ -36,8 +35,7 @@ engine, including for a module that keeps the built-in runtime. Upgrade the engi
 to generate. The engine resolves its built-in PHP runtime from
 `github.com/dagger/dagger/sdk/php`, not from this module. A module already on the
 built-in runtime therefore still loads on that engine, without this module
-generating it. The `enforceEngineFloor` setting turns the refusal off for the floor
-check. An engine below the floor is not supported.
+generating it. An engine below the floor is not supported.
 
 ## Install
 
@@ -174,6 +172,13 @@ The version stays `v1.0.0-beta.25`, the last release before the identifier-casin
 until the PHP codegen is ported to those rules. dagger/dagger gates the cut at
 `v1.0.0-beta.26`. From `v1.0.0-beta.22`, each release has an API view of its own, and
 the client is generated against the `v1.0.0-beta.25` view.
+
+The `targetVersion` setting, or `--target-version`, pins a module to another release
+from `v1.0.0-beta.17` to `v1.0.0-beta.25`, which the client schema,
+`DAGGER_CLIENT_VERSION` and `dang.toml` then use. Generation refuses a value that is
+not a release, is later than `v1.0.0-beta.25` or is below `v1.0.0-beta.17`, and refuses
+a pin on a module that keeps the PHP runtime, which the engine generates for its
+manifest's `engineVersion`. The checks here pin only `v1.0.0-beta.24`.
 
 Passing checks on a released engine show what generation writes and that calls work.
 They do not show that `dang.toml` selects a view. No check here shows that

@@ -22,11 +22,11 @@ type PhpSdk {
   pub template: String! = "minimal"
 
   """
-  Refuse an engine below the floor. The e2e module turns this off to find the
-  floor, which needs a public setting because it is another module. An engine
-  below the floor is not supported.
+  The engine release a module's generated code targets: the floor or later, and
+  the release this SDK generates for or earlier. Empty takes the release this SDK
+  generates for.
   """
-  pub enforceEngineFloor: Boolean! = true
+  pub targetVersion: String! = ""
 
   """
   Find the PHP client root containing the workspace cwd: the directory of the
@@ -70,6 +70,7 @@ type PhpSdk {
       # the root and the cwd restored afterwards: the engine rejects a result
       # whose cwd is not the scope.
       let rooted = ws.withWorkdir(".")
+      let target = targetRelease("module \"" + name + "\"")
       let selectedTemplate = if (template == "") { "minimal" } else { template }
       let initialized = if (hasModuleConfig(ws, scope)) {
         rooted
@@ -78,14 +79,14 @@ type PhpSdk {
       } else {
         sdkHelpers.moduleManifest
           .withName(name: name)
-          .withLegacyRuntime(runtime: "php", engineVersion: targetEngineVersion)
+          .withLegacyRuntime(runtime: "php", engineVersion: target)
           .generate(
             rooted.withDirectory(scope, renderedTemplate(name, selectedTemplate)).withWorkdir(scope),
             legacyJson: false,
           )
           .withWorkdir(".")
       }
-      modAt(scope, initialized, name).generated.withWorkdir(scope)
+      targetedMod(scope, initialized, name, "module \"" + name + "\"").generated.withWorkdir(scope)
     }
   }
 
@@ -101,9 +102,8 @@ type PhpSdk {
   let targetEngineVersion: String! = "v1.0.0-beta.25"
 
   """
-  The oldest release the generated entrypoint passed on, by the e2e module's
-  entrypoint-floor-check, for modules targeting v1.0.0-beta.21. That check has not
-  run with the current target.
+  The oldest release the generated entrypoint passed on, for modules targeting
+  v1.0.0-beta.21. It has not run again with the current target.
   """
   let floorEngineVersion: String! = "v1.0.0-beta.17"
 
@@ -112,7 +112,7 @@ type PhpSdk {
   versions, so the manifest's engineVersion does not keep an older v1.0.0
   prerelease out. A dev build or a later release is not below it.
   """
-  pub belowEngineFloor: Boolean! {
+  let belowEngineFloor: Boolean! {
     let prefix = "v1.0.0-beta."
     let release = version.split("+")[0] ?? version
     let beta = release.trimPrefix(prefix)
@@ -122,20 +122,100 @@ type PhpSdk {
   }
 
   let checkEngine: Void {
-    if (enforceEngineFloor and belowEngineFloor) {
+    if (belowEngineFloor) {
       raise "php-sdk needs an engine from " + floorEngineVersion + ", and this one is " + version + ": upgrade the engine"
     }
     null
   }
 
-  let modAt(path: String!, ws: Workspace!, name: String!): Mod! {
+  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion): Mod! {
     Mod(
       rootPath: path,
       ws: ws,
       skipGenerateFilename: skipGenerateFilename,
-      targetEngineVersion: targetEngineVersion,
+      targetEngineVersion: target,
       givenName: name,
     )
+  }
+
+  """
+  The module at path, generating for targetRelease. A pin on a module that keeps
+  the PHP runtime is refused: the engine regenerates that module for its
+  manifest's engineVersion.
+  """
+  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!): Mod! {
+    let target = targetRelease(subject)
+    let mod = modAt(path, ws, name, target)
+    if (targetVersion != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
+      raise subject + " pins targetVersion " + target + ", which applies to the generated entrypoint only: this module keeps the PHP runtime, which generates for the engineVersion of its manifest. Remove targetVersion from the scope's settings in dagger.toml"
+    }
+    mod
+  }
+
+  """
+  The release a module generates for. A targetVersion this SDK cannot generate for
+  is refused before anything is written.
+  """
+  let targetRelease(subject: String!): String! {
+    if (targetVersion == "") { return targetEngineVersion }
+    let fix = "Set targetVersion between " + floorEngineVersion + " and " + targetEngineVersion + " in the scope's settings in dagger.toml, or remove it"
+    if (targetVersion.containsMatch(Regexp(releasePattern)) == false) {
+      raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + targetEngineVersion + ". " + fix
+    }
+    let bare = targetVersion.split("+")[0] ?? targetVersion
+    let target = if (bare.hasPrefix("v")) { bare } else { "v" + bare }
+    if (releasePrecedes(target, floorEngineVersion)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the PHP SDK cannot generate for: it is below " + floorEngineVersion + ", the oldest engine this SDK runs on. " + fix
+    }
+    if (releasePrecedes(targetEngineVersion, target)) {
+      raise subject + " pins targetVersion " + target + ", which this release of the PHP SDK cannot generate for: it targets " + targetEngineVersion + " at most. " + fix + ", or install the SDK release built for " + target
+    }
+    target
+  }
+
+  """v?MAJOR.MINOR.PATCH, then an optional prerelease and build, as in the Go SDK."""
+  let releasePattern: String! = "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+
+  """Semver precedence; false when either is not a release, so an unreadable version passes."""
+  let releasePrecedes(a: String!, b: String!): Boolean! {
+    let pattern = Regexp(releasePattern)
+    let ma = a.match(pattern)
+    if (ma == null) { return false }
+    let mb = b.match(pattern)
+    if (mb == null) { return false }
+    let ca = ma.captures
+    let cb = mb.captures
+    let coreA = [ca[0] ?? "", ca[1] ?? "", ca[2] ?? ""]
+    let coreB = [cb[0] ?? "", cb[1] ?? "", cb[2] ?? ""]
+    if (identifiersPrecede(coreA, coreB, 0)) { return true }
+    if (identifiersPrecede(coreB, coreA, 0)) { return false }
+    let preA = ca[3] ?? ""
+    let preB = cb[3] ?? ""
+    if (preA == "") {
+      false
+    } else if (preB == "") {
+      true
+    } else {
+      identifiersPrecede(preA.split("."), preB.split("."), 0)
+    }
+  }
+
+  """Numbers by value before words, words by ASCII, a prefix first."""
+  let identifiersPrecede(a: [String!]!, b: [String!]!, i: Int!): Boolean! {
+    if (i >= a.length) { return i < b.length }
+    if (i >= b.length) { return false }
+    let x = a[i] ?? ""
+    let y = b[i] ?? ""
+    if (x == y) { return identifiersPrecede(a, b, i + 1) }
+    let xNumber = x.containsMatch(Regexp("^[0-9]+$"))
+    let yNumber = y.containsMatch(Regexp("^[0-9]+$"))
+    if (xNumber and yNumber) {
+      let xDigits = x.split("").length
+      let yDigits = y.split("").length
+      if (xDigits == yDigits) { x < y } else { xDigits < yDigits }
+    } else {
+      xNumber or (yNumber == false and x < y)
+    }
   }
 
   """
@@ -207,7 +287,7 @@ type PhpSdk {
       normalizePath(path)
     }
 
-    modAt(modPath, ws, "")
+    targetedMod(modPath, ws, "", "module at " + modPath)
   }
 
   """
