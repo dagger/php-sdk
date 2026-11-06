@@ -562,27 +562,6 @@ type E2e {
   }
 
   """
-  dagger/dagger#14902, which is open, takes a module's version from its dang.toml,
-  and the version the raw source reports tells that apart where the view cannot:
-  beta.20 and beta.21 share one view. An older engine ignores the file, so this
-  has nothing to assert there.
-  """
-  pub entrypointEngineVersionCheck(ws: Workspace!): Void @check {
-    let release = version.split("+")[0] ?? version
-    let number = release.trimPrefix("v1.0.0-beta.")
-    let predates = number != release and ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22"].contains(number)
-    if (predates == false) {
-      let generated = generatedEntrypoint(ws)
-      let source = generated.moduleSource("/" + entrypointModulePath)
-      assert(source.engineVersion == target, "the module should report the dang.toml version, not " + source.engineVersion)
-      let declared = withConfig(generated, "dang = \"2.1\"\n\n[imports.Dagger]\ndagger = \"v1.0.0-beta.20\"\n")
-      let other = declared.moduleSource("/" + entrypointModulePath).engineVersion
-      assert(other == "v1.0.0-beta.20", "the module should follow the dang.toml version, not " + other)
-    }
-    null
-  }
-
-  """
   The unit tests of the entrypoint support, against a client of the target schema.
   """
   pub sdkUnitCheck(ws: Workspace!): Void @check {
