@@ -101,8 +101,9 @@ type PhpSdk {
   let targetEngineVersion: String! = "v1.0.0-beta.25"
 
   """
-  The oldest release the generated entrypoint passes on, by the e2e module's
-  entrypoint-floor-check.
+  The oldest release the generated entrypoint passed on, by the e2e module's
+  entrypoint-floor-check, for modules targeting v1.0.0-beta.21. That check has not
+  run with the current target.
   """
   let floorEngineVersion: String! = "v1.0.0-beta.17"
 
