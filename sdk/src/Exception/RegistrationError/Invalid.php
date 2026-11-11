@@ -47,4 +47,24 @@ final class Invalid extends \RuntimeException implements RegistrationError
             Generators must return a non-null Changeset.
             TEXT);
     }
+
+    public static function upRequiresOnlyWorkspace(
+        string $methodName,
+        string $argName,
+    ): self {
+        return new self(<<<TEXT
+            '$methodName' is labeled as up, but requires '$argName'.
+            Up functions may only require a Workspace; every other argument must be optional.
+            TEXT);
+    }
+
+    public static function upReturnsService(
+        string $methodName,
+        string $returnType,
+    ): self {
+        return new self(<<<TEXT
+            '$methodName' is labeled as up, but returns '$returnType'.
+            Up functions must return a non-null Service.
+            TEXT);
+    }
 }

@@ -47,6 +47,7 @@ class EntrypointMetadataTest extends TestCase
         self::assertTrue($main->hasConstructor());
         self::assertTrue($main->daggerFunctions['lint']->withCheck);
         self::assertTrue($main->daggerFunctions['generate']->withGenerator);
+        self::assertTrue($main->daggerFunctions['serve']->withUp);
         self::assertArrayNotHasKey('notExposed', $main->daggerFunctions);
         self::assertSame(
             TypeDefKind::OBJECT_KIND,
