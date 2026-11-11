@@ -26,6 +26,8 @@ Files this repository adds, which have no counterpart in dagger/dagger:
 `.gitignore` replaces the upstream one: it ignores `vendor/`, `generated/` and `.cache/`,
 not the upstream tree's tooling files.
 
+`phpcs.xml.dist` replaces the upstream `phpcs.xml`: it also checks `tests/Unit/Module/`.
+
 `src/Module/EngineNaming.php` ports part of
 [iancoleman/strcase](https://github.com/iancoleman/strcase) v0.3.0, and keeps that
 project's MIT license notice in its header. Generated modules copy `src/` and
