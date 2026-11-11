@@ -132,6 +132,7 @@ class DangEntrypointRendererTest extends TestCase
         yield 'a leading no-break space' => ["\u{00A0}LOW", 'LOW', 'LOW'];
         yield 'a trailing ideographic space' => ['Low', "Low\u{3000}", 'LOW'];
         yield 'a trimmed name reaching a boundary' => ["\u{00A0}A1", 'A_1', 'A_1'];
+        yield 'a digit boundary' => ['Base64', 'BASE_64', 'BASE_64'];
     }
 
     #[Test, DataProvider('provideDistinctCases')]
@@ -159,6 +160,35 @@ class DangEntrypointRendererTest extends TestCase
         yield 'a trimmed name that keeps its boundary' => ["\u{00A0}A1", 'A1'];
         yield 'a no-break space inside a name' => ["Lo\u{00A0}w", 'Low'];
         yield 'a zero width space, which is not trimmed' => ["\u{200B}LOW", 'LOW'];
+    }
+
+    #[Test]
+    public function itRefusesCasesTheEngineNamesAlike(): void
+    {
+        self::expectException(RuntimeException::class);
+        self::expectExceptionMessage('its cases Base64 and BASE64 the same name, BASE64');
+
+        DangEntrypointRenderer::renderTypes(self::enumOf('Base64', 'BASE64'), 'main', self::engineNames(...));
+    }
+
+    #[Test]
+    public function itAcceptsCasesTheEngineNamesApart(): void
+    {
+        $types = DangEntrypointRenderer::renderTypes(self::enumOf('Base64', 'BASE_64'), 'main', self::engineNames(...));
+
+        self::assertStringContainsString('.withEnumMember("Base64")', $types);
+        self::assertStringContainsString('.withEnumMember("BASE_64")', $types);
+    }
+
+    /**
+     * Stands in for ModuleNaming.enumMemberNames at v1.0.0-beta.27.
+     *
+     * @param list<string> $cases
+     * @return list<string>
+     */
+    private static function engineNames(array $cases): array
+    {
+        return array_map(static fn($case) => ['Base64' => 'BASE64'][$case] ?? $case, $cases);
     }
 
     #[Test]

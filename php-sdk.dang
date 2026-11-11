@@ -92,9 +92,9 @@ type PhpSdk {
 
   """
   The engine API version a new module declares, past the identifier-casing cut at
-  v1.0.0-beta.26: see sdk/src/Module/EngineNaming.php for the naming gap. Released
-  engines compare base versions, so older engines load it. The module's client
-  schema, its DAGGER_CLIENT_VERSION and its dang.toml use this one value.
+  v1.0.0-beta.26. Released engines compare base versions, so older engines load
+  it. The module's client schema, its DAGGER_CLIENT_VERSION and its dang.toml use
+  this one value.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.27"
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dagger\Module;
 
+use Closure;
 use Dagger\Service\NormalizesClassName;
 use Dagger\TypeDefKind;
 use Dagger\ValueObject\Argument;
@@ -32,23 +33,34 @@ final readonly class DangEntrypointRenderer
         string $moduleName,
         string $clientVersion,
         string $output,
+        ?Closure $enumMemberNames = null,
     ): void {
         if (!is_dir($output) && !mkdir($output, 0755, true)) {
             throw new RuntimeException("Cannot create the directory $output");
         }
 
-        file_put_contents("$output/types.dang", self::renderTypes($description, $moduleName));
+        file_put_contents("$output/types.dang", self::renderTypes($description, $moduleName, $enumMemberNames));
         file_put_contents("$output/main.dang", self::renderMain($clientVersion));
     }
 
-    public static function renderTypes(Description $description, string $moduleName): string
-    {
+    /**
+     * @param ?Closure(list<string>): list<string> $enumMemberNames The engine's
+     *     enum member names, in input order, where the engine can answer.
+     */
+    public static function renderTypes(
+        Description $description,
+        string $moduleName,
+        ?Closure $enumMemberNames = null,
+    ): string {
         $entries = [
             ...array_map(
                 static fn($object) => self::object($object, $moduleName),
                 $description->objects,
             ),
-            ...array_map(self::enum(...), $description->enums),
+            ...array_map(
+                static fn($enum) => self::enum($enum, $enumMemberNames),
+                $description->enums,
+            ),
         ];
 
         $body = '';
@@ -104,9 +116,9 @@ final readonly class DangEntrypointRenderer
     }
 
     /** @return list<string> */
-    private static function enum(DaggerEnum $enum): array
+    private static function enum(DaggerEnum $enum, ?Closure $enumMemberNames): array
     {
-        self::refuseCollidingCases($enum);
+        self::refuseCollidingCases($enum, $enumMemberNames);
 
         $name = NormalizesClassName::trimLeadingNamespace($enum->name);
         $lines = ['typeDef.withEnum(' . self::quote($name) . self::option('description', $enum->description) . ')'];
@@ -125,22 +137,26 @@ final readonly class DangEntrypointRenderer
      * an error, which would lose a PHP case from the module. Names are escaped
      * because two that collide can differ only in invisible bytes.
      */
-    private static function refuseCollidingCases(DaggerEnum $enum): void
+    private static function refuseCollidingCases(DaggerEnum $enum, ?Closure $enumMemberNames): void
     {
         $visible = static fn(string $name) => addcslashes($name, "\x80..\xff");
+        $cases = array_map(static fn($case) => $case->name, $enum->cases);
+        $names = $enumMemberNames === null
+            ? array_map(EngineNaming::enumMemberName(...), $cases)
+            : $enumMemberNames($cases);
         $seen = [];
-        foreach ($enum->cases as $case) {
-            $name = EngineNaming::enumMemberName($case->name);
+        foreach ($cases as $i => $case) {
+            $name = $names[$i];
             if (isset($seen[$name])) {
                 throw new RuntimeException(sprintf(
                     'Enum %s cannot be registered: the engine gives its cases %s and %s the same name, %s. Rename one.',
                     $enum->name,
                     $visible($seen[$name]),
-                    $visible($case->name),
+                    $visible($case),
                     $visible($name),
                 ));
             }
-            $seen[$name] = $case->name;
+            $seen[$name] = $case;
         }
     }
 
