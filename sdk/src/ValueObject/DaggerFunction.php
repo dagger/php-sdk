@@ -10,6 +10,7 @@ use Dagger\Container;
 use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
 use Dagger\Exception\UnsupportedType;
+use Dagger\Service;
 use Dagger\Workspace;
 use ReflectionMethod;
 use ReflectionNamedType;
@@ -26,12 +27,16 @@ final readonly class DaggerFunction
         public ListOfType|Type $returnType,
         public bool $withCheck = false,
         public bool $withGenerator = false,
+        public bool $withUp = false,
     ) {
         if ($this->withCheck) {
             $this->validateCheck();
         }
         if ($this->withGenerator) {
             $this->validateGenerator();
+        }
+        if ($this->withUp) {
+            $this->validateUp();
         }
     }
 
@@ -74,6 +79,7 @@ final readonly class DaggerFunction
                 returnType: new Type($method->getDeclaringClass()->name),
                 withCheck: $method->getAttributes(Attribute\Check::class) !== [],
                 withGenerator: $method->getAttributes(Attribute\Generate::class) !== [],
+                withUp: $method->getAttributes(Attribute\Up::class) !== [],
             )
             : new self(
                 name: $method->name,
@@ -82,6 +88,7 @@ final readonly class DaggerFunction
                 returnType: self::getReturnType($method),
                 withCheck: $method->getAttributes(Attribute\Check::class) !== [],
                 withGenerator: $method->getAttributes(Attribute\Generate::class) !== [],
+                withUp: $method->getAttributes(Attribute\Up::class) !== [],
             );
     }
 
@@ -147,6 +154,26 @@ final readonly class DaggerFunction
         $returnType = $this->returnType instanceof Type ? $this->returnType->name : 'array';
         if (Changeset::class !== $returnType || $this->returnType->nullable) {
             throw Invalid::generatorReturnsChangeset(
+                $this->name,
+                $returnType,
+            );
+        }
+    }
+
+    private function validateUp(): void
+    {
+        foreach ($this->arguments as $arg) {
+            if ($arg->isRequired() && !($arg->type instanceof Type && Workspace::class === $arg->type->name)) {
+                throw Invalid::upRequiresOnlyWorkspace(
+                    $this->name,
+                    $arg->name,
+                );
+            }
+        }
+
+        $returnType = $this->returnType instanceof Type ? $this->returnType->name : 'array';
+        if (Service::class !== $returnType || $this->returnType->nullable) {
+            throw Invalid::upReturnsService(
                 $this->name,
                 $returnType,
             );

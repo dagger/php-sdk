@@ -11,6 +11,7 @@ use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
 use Dagger\File;
 use Dagger\Json;
+use Dagger\Service;
 use Dagger\Tests\Unit\Fixture\DaggerObjectWithDaggerFunctions;
 use Dagger\ValueObject\Argument;
 use Dagger\ValueObject\DaggerFunction;
@@ -51,6 +52,18 @@ class DaggerFunctionTest extends TestCase
         }))->getMethod('generate');
 
         self::assertTrue(DaggerFunction::fromReflection($method)->withGenerator);
+    }
+
+    #[Test]
+    public function itLetsAnUpFunctionRequireAWorkspace(): void
+    {
+        $method = (new ReflectionClass(new #[DaggerObject] class () {
+            #[\Dagger\Attribute\DaggerFunction]
+            #[\Dagger\Attribute\Up]
+            public function serve(Workspace $workspace): Service {return new Service();}
+        }))->getMethod('serve');
+
+        self::assertTrue(DaggerFunction::fromReflection($method)->withUp);
     }
 
     #[Test]
@@ -158,6 +171,43 @@ class DaggerFunctionTest extends TestCase
                 public function generate(): array {return [];}
             }))->getMethod('generate'),
             Invalid::generatorReturnsChangeset('generate', 'array'),
+        ];
+
+        yield 'up function that requires an argument' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Up]
+                public function serve(string $name): Service {return new Service();}
+            }))->getMethod('serve'),
+            Invalid::upRequiresOnlyWorkspace('serve', 'name'),
+        ];
+
+        yield 'up function that may return null' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Up]
+                public function serve(): ?Service {return null;}
+            }))->getMethod('serve'),
+            Invalid::upReturnsService('serve', Service::class),
+        ];
+
+        yield 'up function that requires a list' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Up]
+                public function serve(#[\Dagger\Attribute\ListOfType('string')] array $names): Service {return new Service();}
+            }))->getMethod('serve'),
+            Invalid::upRequiresOnlyWorkspace('serve', 'names'),
+        ];
+
+        yield 'up function that returns a list' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Up]
+                #[\Dagger\Attribute\ReturnsListOfType('string')]
+                public function serve(): array {return [];}
+            }))->getMethod('serve'),
+            Invalid::upReturnsService('serve', 'array'),
         ];
     }
 

@@ -10,6 +10,7 @@ use Dagger\Container;
 use Dagger\Directory;
 use Dagger\Json;
 use Dagger\Platform;
+use Dagger\Service;
 use Dagger\Workspace;
 use RuntimeException;
 
@@ -140,6 +141,13 @@ class Main
     public function generate(Workspace $workspace): Changeset
     {
         return $workspace->directory('.')->changes($workspace->directory('.'));
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Up]
+    public function serve(Workspace $workspace): Service
+    {
+        return $workspace->directory('.')->dockerBuild()->asService();
     }
 
     #[Attribute\DaggerFunction]
