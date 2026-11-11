@@ -6,6 +6,7 @@ namespace Dagger\Tests\Unit\ValueObject;
 
 use Dagger\Attribute\DaggerObject;
 use Dagger\Container;
+use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
 use Dagger\File;
 use Dagger\Json;
@@ -88,6 +89,24 @@ class DaggerFunctionTest extends TestCase
                 public function returnsArrayWithoutAttribute(): array {return ['hello', 'world'];}
             }))->getMethod('returnsArrayWithoutAttribute'),
             MissingAttribute::returnsListOfType('returnsArrayWithoutAttribute'),
+        ];
+
+        yield 'check requiring a string' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Check]
+                public function lint(string $path): void {}
+            }))->getMethod('lint'),
+            Invalid::checkTakesNoArgs('lint', 'path'),
+        ];
+
+        yield 'check requiring a list' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Check]
+                public function lint(#[\Dagger\Attribute\ListOfType('string')] array $paths): void {}
+            }))->getMethod('lint'),
+            Invalid::checkTakesNoArgs('lint', 'paths'),
         ];
     }
 

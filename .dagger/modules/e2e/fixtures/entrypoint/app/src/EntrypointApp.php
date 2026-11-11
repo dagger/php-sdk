@@ -6,6 +6,7 @@ namespace DaggerModule;
 
 use Dagger\Attribute;
 use Dagger\Directory;
+use Dagger\Workspace;
 use RuntimeException;
 
 #[Attribute\DaggerObject]
@@ -85,7 +86,7 @@ class EntrypointApp
 
     #[Attribute\DaggerFunction]
     #[Attribute\Check]
-    public function selfCheck(): void
+    public function selfCheck(Workspace $ws): void
     {
     }
 }

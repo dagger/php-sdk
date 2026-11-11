@@ -46,6 +46,7 @@ class DangEntrypointRendererTest extends TestCase
         yield 'own object return' => ['function("withMode", typeDef.withObject("Main"))'];
         yield 'void return' => ['function("nothing", typeDef.withKind(TypeDefKind.VOID_KIND))'];
         yield 'check' => ["function(\"lint\", typeDef.withKind(TypeDefKind.VOID_KIND))\n            .withCheck"];
+        yield 'check with workspace' => ["  .withCheck\n            .withArg(\"ws\", typeDef.withObject(\"Workspace\"))"];
         yield 'required argument' => ['.withArg("mode", typeDef.withEnum("Mode"))'];
         yield 'nullable argument has no default' => ['.withArg("value", typeDef.withOptional(true).withKind(TypeDefKind.STRING_KIND))'];
         yield 'string default' => ['.withArg("value", typeDef.withOptional(true).withKind(TypeDefKind.STRING_KIND), defaultValue: ("\"fallback\"" :: Dagger.JSON!))'];
