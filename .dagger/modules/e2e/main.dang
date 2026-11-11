@@ -474,15 +474,20 @@ type E2e {
   """
   A pinned targetVersion reaches dang.toml and the entrypoint's
   DAGGER_CLIENT_VERSION through generateScope and a direct mod, and stays there
-  on a second generation. A release later than the SDK's target is refused on
-  both paths, and so is a pin on a module that keeps the runtime.
+  on a second generation. A direct mod without the setting reads the pin
+  dagger.toml records for the module's scope, at any equivalent path, and the
+  setting wins over it. Records the engine refuses are refused. A
+  release later than the SDK's target is refused on both paths, and so is a pin
+  on a module that keeps the runtime.
   """
   pub targetVersionCheck(ws: Workspace!): Void @check {
     let pinned = "v1.0.0-beta.24"
     let sdk = phpSdk(targetVersion: pinned)
     let generated = generatedEntrypoint(ws, sdk)
     let direct = ws.withChanges(sdk.mod(ws, path: entrypointModulePath, findUp: false).generate)
-    [generated, direct].each { out =>
+    let recording = recordedScope(ws, "./" + entrypointModulePath + "/", pinned)
+    let fromRecord = recording.withChanges(phpSdk.mod(recording, path: entrypointModulePath, findUp: false).generate)
+    [generated, direct, fromRecord].each { out =>
       assertContains(contentsOf(out, entrypointConfigPath), "dagger = \"" + pinned + "\"", "dang.toml should declare the pinned target")
       assertContains(
         contentsOf(out, entrypointModulePath + "/sdk/entrypoint/main.dang"),
@@ -496,9 +501,33 @@ type E2e {
     assertContains(generationError(ws, later), refusal, "a later release should be refused")
     let directRefused = later.mod(ws, path: entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
     assertContains(directRefused, refusal, "a later release should be refused on a direct mod")
+    let recordedLater = recordedScope(ws, "/" + entrypointModulePath, "v1.0.0-beta.28")
+    let recordedRefused = phpSdk.mod(recordedLater, path: entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
+    assertContains(recordedRefused, refusal, "a later recorded release should be refused on a direct mod")
+    let equivalent = phpSdk.mod(recordedLater, path: "tmp/../" + entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
+    assertContains(equivalent, "pins targetVersion v1.0.0-beta.28", "a pin recorded for an equivalent path should apply")
+    let conflicting = recordedScope(recordedLater, "./" + entrypointModulePath, pinned)
+    let conflict = phpSdk.mod(conflicting, path: entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
+    assertContains(conflict, "records several targetVersion settings", "equivalent scope keys with different pins should be refused")
+    let escaping = phpSdk.mod(recordedScope(ws, "../outside", pinned), path: entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
+    assertContains(escaping, "escapes the workspace root", "a scope key outside the workspace should be refused")
+    assert(sdk.mod(recordedLater, path: entrypointModulePath, findUp: false).rootPath == entrypointModulePath, "the targetVersion setting should win over the recorded one")
+    let elsewhere = recordedScope(ws, fixtureRoot + "/entrypoint", "v1.0.0-beta.28")
+    assert(phpSdk.mod(elsewhere, path: entrypointModulePath, findUp: false).rootPath == entrypointModulePath, "a pin recorded for another scope should not apply")
     let manifest = entrypointModulePath + "/dagger-module.toml"
     let kept = generationError(ws.withNewFile("/" + manifest, "include = [\"src\"]\n" + contentsOf(ws, manifest)), sdk)
     assertContains(kept, "applies to the generated entrypoint only", "a pin on a module that keeps the runtime should be refused")
+  }
+
+  """
+  The workspace with dagger.toml recording a targetVersion for the scope at key,
+  in the SDK entry that names php-sdk as its module.
+  """
+  let recordedScope(ws: Workspace!, key: String!, version: String!): Workspace! {
+    let config = contentsOf(ws, "dagger.toml")
+    let entry = if (config.contains("[sdks.php]")) { "" } else { "\n[sdks.php]\nmodule = \"php-sdk\"\n" }
+    let record = entry + "\n[sdks.php.scopes.\"" + key + "\"]\nis-module = true\n\n[sdks.php.scopes.\"" + key + "\".settings]\ntargetVersion = \"" + version + "\"\n"
+    ws.withNewFile("/dagger.toml", config + record)
   }
 
   """

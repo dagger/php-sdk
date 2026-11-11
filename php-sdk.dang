@@ -136,14 +136,14 @@ type PhpSdk {
   }
 
   """
-  The module at path, generating for targetRelease. A pin on a module that keeps
-  the PHP runtime is refused: the engine regenerates that module for its
-  manifest's engineVersion.
+  The module at path, generating for the release a targetVersion setting names.
+  A pin on a module that keeps the PHP runtime is refused: the engine
+  regenerates that module for its manifest's engineVersion.
   """
-  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!): Mod! {
-    let target = targetRelease(subject)
+  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion): Mod! {
+    let target = targetRelease(subject, setting)
     let mod = modAt(path, ws, name, target)
-    if (targetVersion != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
+    if (setting != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
       raise subject + " pins targetVersion " + target + ", which applies to the generated entrypoint only: this module keeps the PHP runtime, which generates for the engineVersion of its manifest. Remove targetVersion from the scope's settings in dagger.toml"
     }
     mod
@@ -153,13 +153,13 @@ type PhpSdk {
   The release a module generates for. A targetVersion this SDK cannot generate for
   is refused before anything is written.
   """
-  let targetRelease(subject: String!): String! {
-    if (targetVersion == "") { return targetEngineVersion }
+  let targetRelease(subject: String!, setting: String! = targetVersion): String! {
+    if (setting == "") { return targetEngineVersion }
     let fix = "Set targetVersion between " + floorEngineVersion + " and " + targetEngineVersion + " in the scope's settings in dagger.toml, or remove it"
-    if (targetVersion.containsMatch(Regexp(releasePattern)) == false) {
-      raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + targetEngineVersion + ". " + fix
+    if (setting.containsMatch(Regexp(releasePattern)) == false) {
+      raise subject + " pins targetVersion " + JSON.encode(setting) + ", which is not a Dagger release such as " + targetEngineVersion + ". " + fix
     }
-    let bare = targetVersion.split("+")[0] ?? targetVersion
+    let bare = setting.split("+")[0] ?? setting
     let target = if (bare.hasPrefix("v")) { bare } else { "v" + bare }
     if (releasePrecedes(target, floorEngineVersion)) {
       raise subject + " pins targetVersion " + target + ", which this release of the PHP SDK cannot generate for: it is below " + floorEngineVersion + ", the oldest engine this SDK runs on. " + fix
@@ -284,7 +284,79 @@ type PhpSdk {
       normalizePath(path)
     }
 
-    targetedMod(modPath, ws, "", "module at " + modPath)
+    let setting = if (targetVersion == "") { recordedTargetVersion(ws, modPath) } else { targetVersion }
+    targetedMod(modPath, ws, "", "module at " + modPath, setting)
+  }
+
+  """
+  The targetVersion the workspace config records for the scope at a
+  workspace-root-relative path, or empty. The engine passes a scope's settings
+  only when it generates the scope itself, so a direct mod reads them from the
+  config file, not its includes, as the engine does. WorkspaceSDK.scopeSetting
+  answers this only in views from v1.0.0-beta.26, and this module's
+  engineVersion is v1.0.0-beta.17. Unlike python-sdk, a targetVersion passed to
+  the SDK wins over the record. Only targetVersion is checked for conflicting or
+  case-colliding records; the engine validates the rest of the config. Follows
+  dagger/dagger v1.0.0-beta.27 core/workspace.
+  """
+  let recordedTargetVersion(ws: Workspace!, scope: String!): String! {
+    let rooted = ws.withWorkdir(".")
+    let configFile = rooted.configFile
+    if (configFile == "") { return "" }
+    let config = json.withContents((JSON.encode(TOML.decode(rooted.file("/" + configFile).contents)) :: Dagger.JSON!))
+    if (config.fields.contains("sdks") == false) { return "" }
+    let sdks = config.field(["sdks"])
+    let own = currentModule.name
+    let names = sdks.fields.filter { name =>
+      let sdk = sdks.field([name])
+      name == own or (sdk.fields.contains("module") and sdk.field(["module"]).asString == own)
+    }
+    if (names.length > 1) {
+      raise "SDK lookup name \"" + own + "\" is ambiguous: SDKs \"" + (names[0] ?? "") + "\" and \"" + (names[1] ?? "") + "\" both resolve it"
+    }
+    let sdkName = names[0] ?? ""
+    if (sdkName == "" or sdks.field([sdkName]).fields.contains("scopes") == false) { return "" }
+    let scopes = sdks.field([sdkName, "scopes"])
+    let configDir = if (configFile.contains("/")) { configFile.split("/").dropLast(1).join("/") } else { "." }
+    let target = scopeKeyPath(".", "/" + scope)
+    let recorded = scopes.fields
+      .filter { key => scopeKeyPath(configDir, key) == target and scopes.field([key]).fields.contains("settings") }
+      .reduce([] :: [String!]!) { found, key =>
+        let settings = scopes.field([key, "settings"])
+        found + settings.fields.filter { name => name.toLower == "targetversion" }.map { name => name + " = " + settings.field([name]).asString }
+      }
+    if (recorded.filter { pin => pin != (recorded[0] ?? "") }.length > 0) {
+      raise "SDK \"" + sdkName + "\" records several targetVersion settings for the scope " + target + ": " + recorded.join(", ") + "; keep one in dagger.toml"
+    }
+    (recorded[0] ?? "").split(" = ").dropFirst(1).join(" = ")
+  }
+
+  """
+  The workspace-root-relative path a scope key names: a key with a leading "/"
+  is rooted at the workspace root, any other is relative to the config's
+  directory, and a key that escapes the root is refused.
+  """
+  let scopeKeyPath(configDir: String!, key: String!): String! {
+    let slashed = key.replace("\\", "/")
+    let rooted = slashed.hasPrefix("/")
+    let joined = if (rooted) { slashed } else { configDir + "/" + slashed }
+    let segments = joined.split("/").reduce([] :: [String!]!) { kept, segment =>
+      if (segment == "" or segment == ".") {
+        kept
+      } else if (segment != "..") {
+        kept + [segment]
+      } else if (kept.length > 0 and (kept[kept.length - 1] ?? "") != "..") {
+        kept.dropLast(1)
+      } else if (rooted) {
+        kept
+      } else {
+        kept + [segment]
+      }
+    }
+    if ((segments[0] ?? "") == "..") {
+      raise "the scope key " + JSON.encode(key) + " in dagger.toml escapes the workspace root"
+    }
+    if (segments.length == 0) { "." } else { segments.join("/") }
   }
 
   """
