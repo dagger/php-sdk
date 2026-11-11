@@ -17,7 +17,7 @@ type PhpSdk {
   pub skipGenerateFilename: String! = ".dagger-php-sdk-skip-generate"
 
   """
-  Starter template under templates/<template> for a new module.
+  Starter template under templates/<template> for a module without composer.json.
   """
   pub template: String! = "minimal"
 
@@ -51,9 +51,9 @@ type PhpSdk {
 
   """
   Generate one SDK scope: the module at the workspace cwd, when the scope is a
-  module. A scope without a module config is first seeded from the `template`
-  setting, keeping the files already there, and given a dagger-module.toml. A
-  self-contained module then moves to the entrypoint this SDK generates; see
+  module. A scope without a module config is given a dagger-module.toml. A
+  self-contained module then moves to the entrypoint this SDK generates, seeded
+  from the `template` setting when it has no composer.json; see
   Mod.usesEntrypoint. Module clients are not generated yet.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
@@ -71,19 +71,13 @@ type PhpSdk {
       # whose cwd is not the scope.
       let rooted = ws.withWorkdir(".")
       let target = targetRelease("module \"" + name + "\"")
-      let selectedTemplate = if (template == "") { "minimal" } else { template }
       let initialized = if (hasModuleConfig(ws, scope)) {
         rooted
-      } else if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
-        raise "unknown init template: " + template
       } else {
         sdkHelpers.moduleManifest
           .withName(name: name)
           .withLegacyRuntime(runtime: "php", engineVersion: target)
-          .generate(
-            rooted.withDirectory(scope, renderedTemplate(name, selectedTemplate)).withWorkdir(scope),
-            legacyJson: false,
-          )
+          .generate(rooted.withWorkdir(scope), legacyJson: false)
           .withWorkdir(".")
       }
       targetedMod(scope, initialized, name, "module \"" + name + "\"").generated.withWorkdir(scope)
@@ -97,6 +91,13 @@ type PhpSdk {
   this one value.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.27"
+
+  """
+  The template the `template` setting names, `minimal` when it is empty.
+  """
+  let selectedTemplate: String! {
+    if (template == "") { "minimal" } else { template }
+  }
 
   """
   The oldest release the generated entrypoint passed on, for modules targeting
@@ -132,6 +133,7 @@ type PhpSdk {
       skipGenerateFilename: skipGenerateFilename,
       targetEngineVersion: target,
       givenName: name,
+      templateName: selectedTemplate,
       declaresLaterEngine: laterEngine,
     )
   }
@@ -423,22 +425,5 @@ type PhpSdk {
       )
       .{{id}}
       .length > 0
-  }
-
-  """
-  Render a PHP template with the requested module name.
-  """
-  let renderedTemplate(name: String!, templateName: String!): Directory! {
-    container
-      .from("golang:1.25-alpine")
-      .withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
-      .withDirectory("/template", currentModule.source.directory("templates/" + templateName))
-      .withWorkdir("/helper")
-      .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
-      .withExec(["render-template", name, "/template", "/rendered"])
-      .directory("/rendered")
   }
 }

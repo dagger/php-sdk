@@ -38,6 +38,11 @@ type Mod {
   """
   let givenName: String!
 
+  """
+  The init template under templates/ that seeds a module without composer.json.
+  """
+  let templateName: String!
+
   let phpImage: String! = "php:8.4-cli-alpine@sha256:ef24d42ed7297dc8c9a6672988594c5f18702a434b3af48a3128fed8d2569746"
   let composerImage: String! = "composer/composer:2.8-bin@sha256:c735b6a52ea118693178babc601984dbbbd07f1d31ec87eaa881173622b467ed"
   let entrypointPath: String! = "sdk/entrypoint"
@@ -175,7 +180,12 @@ type Mod {
   let entrypointGenerated: Workspace! {
     checkConfig
     checkSdkOwned
-    let rooted = ws.withWorkdir(".")
+    let current = ws.withWorkdir(".")
+    let rooted = if (fileExists("composer.json")) {
+      current
+    } else {
+      current.withDirectory(rootPath, renderedTemplate.withDirectory(".", current.directory(rootPath)))
+    }
     let sdk = sdkTree
     let describing = phpContainer
       .withDirectory("/src", rooted.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true))
@@ -195,6 +205,28 @@ type Mod {
       .withDirectory(modulePath("sdk"), sdk.withDirectory("entrypoint", entrypoint))
       .withNewFile(modulePath("composer.lock"), describing.file("/src/composer.lock").contents, permissions: 420)
     withGitVisibility(withManifest(withConfig(written)))
+  }
+
+  """
+  The templateName template rendered with the module name. A module without
+  composer.json gets the files of it that it does not have, as the engine's PHP
+  runtime seeds such a module.
+  """
+  let renderedTemplate: Directory! {
+    if (currentModule.source.exists("templates/" + templateName) == false) {
+      raise "unknown init template: " + templateName
+    }
+    container
+      .from("golang:1.25-alpine")
+      .withoutEntrypoint
+      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
+      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
+      .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
+      .withDirectory("/template", currentModule.source.directory("templates/" + templateName))
+      .withWorkdir("/helper")
+      .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
+      .withExec(["render-template", moduleName, "/template", "/rendered"])
+      .directory("/rendered")
   }
 
   """
@@ -424,7 +456,7 @@ type Mod {
 
   let composerBlockers: [String!]! {
     if (fileExists("composer.json") == false) {
-      ["it has no composer.json"]
+      [] :: [String!]!
     } else {
       let composer = parsedJson(contentsOf("composer.json"))
       let repositories = if (composer.fields.contains("repositories")) { rawEntries(composer.field(["repositories"])) } else { [] :: [String!]! }

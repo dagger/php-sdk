@@ -157,8 +157,8 @@ type E2e {
   generateScope on an existing module changes files under the scope only, not
   one module path deeper, and the scope stays the cwd.
 
-  This needs a module whose codegen actually emits files, so it runs the PHP
-  runtime.
+  The module has a manifest only, so generation seeds the template, as the PHP
+  runtime would, and moves the module to the entrypoint.
   """
   pub generateExistingModuleCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
@@ -181,6 +181,9 @@ type E2e {
       paths.filter { path => path.hasPrefix(rootingModulePath + "/" + fixtureRoot) }.length == 0,
       "generated files landed one module path deeper than the scope",
     )
+    assert(contains(changes.addedPaths, rootingModulePath + "/composer.json"), "a module without a composer.json should be seeded")
+    assert(contains(changes.addedPaths, rootingModulePath + "/src/RootingApp.php"), "the seeded template should name the module's class")
+    assertContains(generated.file("dagger-module.toml").contents, "source = \"./sdk/entrypoint\"", "a seeded module should move to the entrypoint")
     null
   }
 
@@ -399,7 +402,14 @@ type E2e {
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, dependency)) == false, "a module with dependencies keeps the runtime")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"src\"]\n" + kept)) == false, "a module with include rules keeps the runtime")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept)) == false, "a module with another source keeps the runtime")
-    assert(usesEntrypoint(ws.withoutFile("/" + composer)) == false, "a module without a composer.json keeps the runtime")
+    assert(usesEntrypoint(ws.withoutFile("/" + composer)), "a module without a composer.json should be eligible")
+    let moduleClass = entrypointModulePath + "/src/EntrypointApp.php"
+    let seeded = generatedEntrypoint(ws.withoutFile("/" + composer))
+    assert(contentsOf(seeded, moduleClass) == contentsOf(ws, moduleClass), "the seeded template should keep the module's files")
+    assertContains(generationError(ws.withoutFile("/" + composer), phpSdk(template: "missing")), "unknown init template: missing", "a module seeded from an unknown template")
+    let initialized = generatedEntrypoint(ws.withoutFile("/" + manifest))
+    assert(contentsOf(initialized, composer) == composerText, "a new module should keep its composer.json")
+    assert(exists(initialized, entrypointModulePath + "/entrypoint.php") == false, "a new module with a composer.json should get no starter files")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", "v1.1.0"))) == false, "a module on an engine later than the target keeps the runtime")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", target))), "a module on the target engine should be eligible")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + kept)) == false, "a module without default function caching keeps the runtime")
