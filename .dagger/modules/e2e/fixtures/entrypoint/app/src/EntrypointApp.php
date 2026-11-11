@@ -7,6 +7,7 @@ namespace DaggerModule;
 use Dagger\Attribute;
 use Dagger\Changeset;
 use Dagger\Directory;
+use Dagger\LLM;
 use Dagger\Service;
 use Dagger\Workspace;
 use RuntimeException;
@@ -106,5 +107,12 @@ class EntrypointApp
     public function selfUp(): Service
     {
         return dag()->container()->from('alpine')->asService();
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Agent]
+    public function selfAgent(LLM $base): LLM
+    {
+        return $base;
     }
 }

@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Dagger\ValueObject;
 
+use Dagger\Agent;
 use Dagger\Attribute;
 use Dagger\Changeset;
 use Dagger\Container;
 use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
 use Dagger\Exception\UnsupportedType;
+use Dagger\LLM;
 use Dagger\Service;
 use Dagger\Workspace;
 use ReflectionMethod;
@@ -28,6 +30,7 @@ final readonly class DaggerFunction
         public bool $withCheck = false,
         public bool $withGenerator = false,
         public bool $withUp = false,
+        public bool $withAgent = false,
     ) {
         if ($this->withCheck) {
             $this->validateCheck();
@@ -37,6 +40,9 @@ final readonly class DaggerFunction
         }
         if ($this->withUp) {
             $this->validateUp();
+        }
+        if ($this->withAgent) {
+            $this->validateAgent();
         }
     }
 
@@ -80,6 +86,7 @@ final readonly class DaggerFunction
                 withCheck: $method->getAttributes(Attribute\Check::class) !== [],
                 withGenerator: $method->getAttributes(Attribute\Generate::class) !== [],
                 withUp: $method->getAttributes(Attribute\Up::class) !== [],
+                withAgent: $method->getAttributes(Attribute\Agent::class) !== [],
             )
             : new self(
                 name: $method->name,
@@ -89,6 +96,7 @@ final readonly class DaggerFunction
                 withCheck: $method->getAttributes(Attribute\Check::class) !== [],
                 withGenerator: $method->getAttributes(Attribute\Generate::class) !== [],
                 withUp: $method->getAttributes(Attribute\Up::class) !== [],
+                withAgent: $method->getAttributes(Attribute\Agent::class) !== [],
             );
     }
 
@@ -177,6 +185,38 @@ final readonly class DaggerFunction
                 $this->name,
                 $returnType,
             );
+        }
+    }
+
+    private function validateAgent(): void
+    {
+        $returnType = $this->returnType instanceof Type ? $this->returnType->name : 'array';
+        if (LLM::class !== $returnType || $this->returnType->nullable) {
+            throw Invalid::agentReturnsLLM(
+                $this->name,
+                $returnType,
+            );
+        }
+
+        $llms = 0;
+        $bases = 0;
+        foreach ($this->arguments as $arg) {
+            $type = $arg->type instanceof Type ? $arg->type->name : 'array';
+            $llms += LLM::class === $type ? 1 : 0;
+            if (!$arg->isRequired() || Workspace::class === $type || Agent::class === $type) {
+                continue;
+            }
+            if (LLM::class === $type && ++$bases === 1) {
+                continue;
+            }
+            throw Invalid::agentRequiresArgument(
+                $this->name,
+                $arg->name,
+            );
+        }
+
+        if ($bases !== 1 || $llms !== 1) {
+            throw Invalid::agentTakesOneBase($this->name);
         }
     }
 }

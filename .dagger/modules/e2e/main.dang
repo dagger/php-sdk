@@ -563,6 +563,7 @@ type E2e {
     local.withExec(["dagger", "-m", ".", "check", "self-check"], experimentalPrivilegedNesting: true).sync
     assertContains(call(local, ["generate", "-l"]), "self-generate", "the generator should be listed")
     assertContains(call(local, ["start", "-l"]), "self-up", "the up function should be listed")
+    assertContains(call(local, ["agent", "-l"]), "self-agent", "the agent should be listed")
 
     let failure = local
       .withExec(["dagger", "-m", ".", "call", "fail"], experimentalPrivilegedNesting: true, expect: ReturnType.FAILURE)
