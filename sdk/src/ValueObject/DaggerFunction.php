@@ -9,6 +9,7 @@ use Dagger\Container;
 use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
 use Dagger\Exception\UnsupportedType;
+use Dagger\Workspace;
 use ReflectionMethod;
 use ReflectionNamedType;
 use RuntimeException;
@@ -106,7 +107,7 @@ final readonly class DaggerFunction
     private function validateCheck(): void
     {
         foreach ($this->arguments as $arg) {
-            if ($arg->isRequired()) {
+            if ($arg->isRequired() && !($arg->type instanceof Type && Workspace::class === $arg->type->name)) {
                 throw Invalid::checkTakesNoArgs(
                     $this->name,
                     $arg->name,

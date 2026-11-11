@@ -13,6 +13,9 @@ Local changes to the vendored files:
   fails. The upstream tree commits `generated/`, so it never needs either.
 - `tests/Unit/Service/Serialisation/SerialiserTest.php` uses `Id`. `ContainerId`
   exists upstream only as a stale committed class, which a regenerated client lacks.
+- `src/ValueObject/DaggerFunction.php` accepts a check with a required
+  `Workspace`, which the engine supplies, and `src/Exception/RegistrationError/Invalid.php`
+  says so.
 - `composer.json` autoloads the `DaggerModule` namespace of the test fixtures for
   development.
 

@@ -14,7 +14,7 @@ final class Invalid extends \RuntimeException implements RegistrationError
     ): self {
         return new self(<<<TEXT
             '$methodName' is labeled as a check, but requires '$argName'.
-            Checks may only contain optional arguments.
+            Checks may only require a Workspace; every other argument must be optional.
             TEXT);
     }
 

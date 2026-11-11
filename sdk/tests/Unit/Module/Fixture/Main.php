@@ -9,6 +9,7 @@ use Dagger\Container;
 use Dagger\Directory;
 use Dagger\Json;
 use Dagger\Platform;
+use Dagger\Workspace;
 use RuntimeException;
 
 #[Attribute\DaggerObject]
@@ -129,7 +130,7 @@ class Main
 
     #[Attribute\DaggerFunction]
     #[Attribute\Check]
-    public function lint(): void
+    public function lint(Workspace $ws): void
     {
     }
 
