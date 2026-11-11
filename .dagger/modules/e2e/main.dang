@@ -624,4 +624,20 @@ type E2e {
       .sync
     null
   }
+
+  """
+  The PHPStan analysis of the PHP library, against a client of the target schema.
+  """
+  pub sdkAnalysisCheck(ws: Workspace!): Void @check {
+    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
+    mod.phpContainer
+      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
+      .withWorkdir("/sdk")
+      .withExec(["composer", "install"])
+      .withMountedFile("/schema.json", mod.clientSchema)
+      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
+      .withExec(["vendor/bin/phpstan", "analyse", "--no-progress", "--memory-limit=1G"])
+      .sync
+    null
+  }
 }

@@ -1,8 +1,8 @@
 # Vendored PHP library
 
-`src/`, `scripts/`, `tests/`, `composer.json`, `composer.lock`, `LICENSE` and
-`phpunit.xml.dist` come from `sdk/php` in dagger/dagger at `v1.0.0-beta.27`,
-commit `400b82d6f3c09ef096d2f59b3e920267b5969bf4`.
+`src/`, `scripts/`, `tests/`, `composer.json`, `composer.lock`, `LICENSE`,
+`phpstan-baseline.neon` and `phpunit.xml.dist` come from `sdk/php` in dagger/dagger
+at `v1.0.0-beta.27`, commit `400b82d6f3c09ef096d2f59b3e920267b5969bf4`.
 
 Local changes to the vendored files:
 
@@ -27,6 +27,10 @@ Files this repository adds, which have no counterpart in dagger/dagger:
 not the upstream tree's tooling files.
 
 `phpcs.xml.dist` replaces the upstream `phpcs.xml`: it also checks `tests/Unit/Module/`.
+
+`phpstan.dist.neon` differs from the upstream file: it also analyses `tests/Unit/Module/`.
+The baseline holds the two errors that upstream records in `src/Client/`.
+`src/Client/` is unchanged from upstream.
 
 `src/Module/EngineNaming.php` ports part of
 [iancoleman/strcase](https://github.com/iancoleman/strcase) v0.3.0, and keeps that
