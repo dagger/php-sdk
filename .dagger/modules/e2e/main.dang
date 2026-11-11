@@ -14,6 +14,7 @@ type E2e {
   let clientTargetPath: String! = fixtureRoot + "/client-target/app"
   let clientMakerPath: String! = fixtureRoot + "/client-target/maker"
   let clientCallerPath: String! = fixtureRoot + "/client-target/caller"
+  let programPath: String! = fixtureRoot + "/client-target/program"
   let target: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
 
@@ -51,6 +52,14 @@ type E2e {
   """
   let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = []): Workspace! {
     sdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: clients).withWorkdir(".")
+  }
+
+  """
+  The fixture program, a scope without a module, generated from a workspace, at
+  the workspace root.
+  """
+  let generatedProgram(ws: Workspace!, clients: [ModuleSource!]!): Workspace! {
+    phpSdk.generateScope(ws.withWorkdir(programPath), isModule: false, name: "", clients: clients).withWorkdir(".")
   }
 
   let usesEntrypoint(ws: Workspace!): Boolean! {
@@ -97,17 +106,20 @@ type E2e {
   }
 
   """
-  The client root is the nearest composer.json, except that a module's vendored
-  SDK resolves to the module that owns it.
+  The client root is the nearest composer.json, except that the vendored SDK of
+  a module or a PHP program resolves to the module or program that owns it.
   """
   pub findClientRootCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
     let fromModule = phpSdk.findClientRoot(root.asWorkspace(cwd: clientRootModulePath))
     let fromSdk = phpSdk.findClientRoot(root.asWorkspace(cwd: clientRootModulePath + "/sdk"))
     let outside = phpSdk.findClientRoot(root.asWorkspace(cwd: fixtureRoot))
+    let program = root.withNewFile(programPath + "/sdk/composer.json", "{\"name\": \"dagger/dagger\"}\n")
+    let fromProgramSdk = phpSdk.findClientRoot(program.asWorkspace(cwd: programPath + "/sdk"))
 
     assert(fromModule == clientRootModulePath, "a module should be its own client root")
     assert(fromSdk == clientRootModulePath, "a vendored SDK should resolve to the module that owns it")
+    assert(fromProgramSdk == programPath, "a PHP program's vendored SDK should resolve to the program that owns it")
     assert(outside == null, "a directory outside any PHP project should have no client root")
     null
   }
@@ -197,6 +209,9 @@ type E2e {
   workspace, so it changes nothing. A direct generation, which does not know the
   clients, refuses a module that has some. The client type in a function
   signature is refused by the entrypoint describer, which the unit tests cover.
+  A program, a scope without a module, gets its clients the same way and the
+  Composer wiring, keeps them after a second generation, and keeps its core
+  once its last client is removed.
   """
   pub generateClientScopeCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
@@ -237,7 +252,34 @@ type E2e {
     let plain = phpSdk.generateScope(root.asWorkspace(cwd: layeringModulePath), isModule: false, name: "layering", clients: [lister]).cwd rescue {
       err: Error => err.message
     }
-    assertContains(plain, "in a scope without a module yet: remove the clients file-lister", "a client in a scope without a module should be refused")
+    assertContains(plain, "has no composer.json, which autoloads its clients: create one with composer init, or remove the clients file-lister", "a client in a scope without a module or composer.json should be refused")
+
+    let programSdk = programPath + "/sdk/generated"
+    let program = generatedProgram(local, [lister])
+    assert(exists(program, programSdk + "/Clients/FileLister/Client.php"), "a program's client should be generated")
+    assert(exists(program, programSdk + "/Client.php"), "a program's core should be generated")
+    let composer = contentsOf(program, programPath + "/composer.json")
+    assertContains(composer, "\"url\": \"./sdk\"", "a program should get the path repository ./sdk")
+    assertContains(composer, "\"dagger/dagger\": \"*@dev\"", "a program should require dagger/dagger")
+    assertContains(composer, "\"extra\": {\"keep\": true}", "a program's other keys should be kept, with their formatting")
+    let lock = contentsOf(program, programPath + "/composer.lock")
+    assert(lock.containsMatch("\"name\": \"dagger/dagger\",[^}]*\"dist\": \\{\\s*\"type\": \"path\",\\s*\"url\": \"\\./sdk\""), "a program's composer.lock should install dagger/dagger from ./sdk")
+    phpSdk.mod(local, path: entrypointModulePath, findUp: false).phpContainer
+      .withDirectory("/program", program.directory("/" + programPath, include: ["composer.json", "composer.lock"]))
+      .withWorkdir("/program")
+      .withExec(["composer", "validate", "--no-check-publish"])
+      .sync
+    assert(generatedProgram(program, [lister]).changes(program).isEmpty, "a second generation of a program changed it")
+    let emptied = generatedProgram(program, [])
+    assert(exists(emptied, programSdk + "/Clients") == false, "removing a program's last client should remove generated/Clients")
+    assert(exists(emptied, programSdk + "/Client.php"), "removing a program's last client should keep its core")
+    assertContains(contentsOf(emptied, programPath + "/composer.json"), "\"dagger/dagger\": \"*@dev\"", "removing a program's last client should keep its Composer wiring")
+    let namedRepository = local.withNewFile("/" + programPath + "/composer.json", "{\"repositories\": {\"dagger-sdk\": {\"type\": \"vcs\", \"url\": \"https://example.com/x.git\"}}}\n")
+    let taken = generatedProgram(namedRepository, [lister]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(taken, "names a Composer repository dagger-sdk, which composer config would replace with ./sdk", "a program's own repository named dagger-sdk should be refused")
+
     let manifest = entrypointModulePath + "/dagger-module.toml"
     let runtime = generationError(local.withNewFile("/" + manifest, "include = [\"src\"]\n" + contentsOf(local, manifest)), clients: [lister])
     assertContains(runtime, "keeps the PHP runtime, whose sdk/ the engine generates without clients: move the module to the generated entrypoint, or remove the clients file-lister", "a client of a module that keeps the runtime should be refused")
@@ -252,12 +294,18 @@ type E2e {
       .withNewFile("/" + clientMakerPath + "/dagger-module.toml", "name = \"file-maker\"\nengineVersion = \"v1.0.0-beta.25\"\n\n[runtime]\n  source = \"dang\"\n")
       .moduleSource("/" + clientMakerPath)
     assertContains(generationError(local, clients: [acrossCut]), "generates for " + target + " and has the client file-maker, which declares v1.0.0-beta.25, across the identifier-casing cut at v1.0.0-beta.26", "a client module on the other side of the identifier-casing cut from the target should be refused")
+    let programCut = generatedProgram(local, [acrossCut]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(programCut, "generates for " + target + " and has the client file-maker, which declares v1.0.0-beta.25", "a program's client module on the other side of the identifier-casing cut from the target should be refused")
     null
   }
 
   """
   A module calls two clients through dagger call, from its own code: a core
-  Directory that one client returns reaches the other.
+  Directory that one client returns reaches the other. A program installed with
+  Composer does the same in a nested session, whose local addresses resolve in
+  this module's tree.
   """
   pub unifiedClientCallCheck(ws: Workspace!): Void @check {
     let tree = directory
@@ -274,6 +322,18 @@ type E2e {
       .withWorkdir("/work/caller")
     let listed = call(app, ["call", "list-made"])
     assert(listed.trimSpace == "a.html,b.html", "the module should list what one client made with the other: " + listed)
+
+    # A workspace opened from Git, as on CI, would make these fixtures Git clients.
+    let local = ws.directory("/").asWorkspace
+    let program = generatedProgram(local, [local.moduleSource("/" + clientTargetPath), local.moduleSource("/" + clientMakerPath)])
+    let printed = phpSdk.mod(ws, path: entrypointModulePath, findUp: false).phpContainer
+      .withDirectory("/program", program.directory("/" + programPath))
+      .withWorkdir("/program")
+      .withExec(["composer", "install", "--no-dev"])
+      .withEnvVariable("DAGGER_CLIENT_VERSION", target)
+      .withExec(["php", "main.php"], experimentalPrivilegedNesting: true)
+      .stdout
+    assert(printed.trimSpace == "a.html,b.html", "the program should list what one client made with the other: " + printed)
   }
 
   """

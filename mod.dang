@@ -187,17 +187,8 @@ type Mod {
     checkConfig
     checkSdkOwned
     checkClients
-    let current = ws.withWorkdir(".")
-    let rooted = if (fileExists("composer.json")) {
-      current
-    } else {
-      current.withDirectory(rootPath, renderedTemplate.withDirectory(".", current.directory(rootPath)))
-    }
     let sdk = sdkTree
-    let describing = phpContainer
-      .withDirectory("/src", rooted.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true))
-      .withDirectory("/src/sdk", sdk)
-      .withWorkdir("/src")
+    let describing = sourceWithSdk(sdk)
       .withExec(composerCommand)
       .withEnvVariable("DAGGER_CLIENT_VERSION", targetEngineVersion)
       .withExec(
@@ -205,10 +196,7 @@ type Mod {
         experimentalPrivilegedNesting: true,
       )
     let entrypoint = describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang)
-    # Generated files are replaced whole: merging would keep client classes the
-    # target schema no longer has.
-    let cleared = if (fileExists("sdk")) { rooted.withoutDirectory(modulePath("sdk")) } else { rooted }
-    let written = cleared
+    let written = withoutSdk
       .withDirectory(modulePath("sdk"), sdk.withDirectory("entrypoint", entrypoint))
       .withNewFile(modulePath("composer.lock"), describing.file("/src/composer.lock").contents, permissions: 420)
     withGitVisibility(withManifest(withConfig(written)))
@@ -234,6 +222,86 @@ type Mod {
       .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
       .withExec(["render-template", moduleName, "/template", "/rendered"])
       .directory("/rendered")
+  }
+
+  """
+  The workspace at its root. A module without composer.json gets the files of the
+  templateName template that it does not have.
+  """
+  let seeded: Workspace! {
+    let current = ws.withWorkdir(".")
+    if (fileExists("composer.json")) {
+      current
+    } else {
+      current.withDirectory(rootPath, renderedTemplate.withDirectory(".", current.directory(rootPath)))
+    }
+  }
+
+  """
+  The workspace with this PHP program's clients generated into its sdk/, at the
+  workspace root. A program is a scope without a module: its composer.json gets
+  the path repository ./sdk and requires dagger/dagger, and its composer.lock
+  follows. A program without clients is left as it is, unless this SDK wrote its
+  sdk/, which is then regenerated without them.
+  """
+  pub programGenerated: Workspace! {
+    let hasComposer = fileExists("composer.json")
+    let nothingToWrite = knownClients.length == 0 and (hasComposer == false or ownsSdk == false)
+    if (skipGenerate or nothingToWrite) {
+      return ws.withWorkdir(".")
+    }
+    if (hasComposer == false) {
+      raise label + " has no composer.json, which autoloads its clients: create one with composer init, or remove the clients " + knownClients.map { client => client.moduleName }.join(", ")
+    }
+    let keyTaken = toString(parsedJson(contentsOf("composer.json")).field(["repositories", "dagger-sdk"]).contents) rescue {
+      err: Error => ""
+    }
+    if (usesSdkRepository == false and keyTaken != "") {
+      raise label + " names a Composer repository dagger-sdk, which composer config would replace with ./sdk: rename it"
+    }
+    checkSdkOwned
+    checkClients
+    let sdk = sdkTree
+    let source = sourceWithSdk(sdk)
+    let repository = if (usesSdkRepository) { source } else { source.withExec(["composer", "config", "repositories.dagger-sdk", "path", "./sdk"]) }
+    let wired = repository
+      .withExec(["composer", "require", "--no-update", "dagger/dagger:*@dev"])
+      .withExec(composerCommand)
+    let lock = wired.file("/src/composer.lock").contents
+    if (lock.containsMatch(Regexp(sdkLockPattern)) == false) {
+      raise label + " has a Composer repository that provides dagger/dagger in place of ./sdk, which holds its clients: remove that repository, or the filters on ./sdk"
+    }
+    withoutSdk
+      .withDirectory(modulePath("sdk"), sdk)
+      .withNewFile(modulePath("composer.json"), wired.file("/src/composer.json").contents, permissions: 420)
+      .withNewFile(modulePath("composer.lock"), lock, permissions: 420)
+  }
+
+  """
+  dagger/dagger in a composer.lock, installed from the path repository ./sdk.
+  """
+  let sdkLockPattern: String! = "\"name\": \"dagger/dagger\",[^}]*\"dist\": \\{\\s*\"type\": \"path\",\\s*\"url\": \"(\\./)?sdk/?\""
+
+  let sourceWithSdk(sdk: Directory!): Container! {
+    phpContainer
+      .withDirectory("/src", seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true))
+      .withDirectory("/src/sdk", sdk)
+      .withWorkdir("/src")
+  }
+
+  """
+  Generated files are replaced whole: merging would keep client classes the
+  target schema no longer has.
+  """
+  let withoutSdk: Workspace! {
+    if (fileExists("sdk")) { seeded.withoutDirectory(modulePath("sdk")) } else { seeded }
+  }
+
+  """
+  What a refusal names: the module, or the PHP program of a scope without one.
+  """
+  let label: String! {
+    if (fileExists("dagger-module.toml") or fileExists("dagger.json")) { "module at " + rootPath } else { "PHP program at " + rootPath }
   }
 
   """
@@ -439,17 +507,21 @@ type Mod {
   user's, and replacing it would lose it.
   """
   let checkSdkOwned: Void {
-    if (fileExists("sdk")) {
-      let name = if (fileExists("sdk/composer.json")) {
-        stringField(parsedJson(contentsOf("sdk/composer.json")), "name")
-      } else {
-        ""
-      }
-      if (name != "dagger/dagger") {
-        raise "sdk/ in the module at " + rootPath + " is not the SDK's library, and generating would replace it: move it"
-      }
+    if (fileExists("sdk") and ownsSdk == false) {
+      raise "sdk/ in the " + label + " is not the SDK's library, and generating would replace it: move it"
     }
     null
+  }
+
+  """
+  Whether sdk/ is the SDK's library, which generation may replace.
+  """
+  pub ownsSdk: Boolean! {
+    if (fileExists("sdk/composer.json")) {
+      stringField(parsedJson(contentsOf("sdk/composer.json")), "name") == "dagger/dagger"
+    } else {
+      false
+    }
   }
 
   """
@@ -466,11 +538,11 @@ type Mod {
     knownClients.reduce([] :: [String!]!) { seen, client =>
       let name = client.moduleName
       if (clientAddress(client) == moduleRef) {
-        raise "module at " + rootPath + " declares itself as the client " + name + ", which php-sdk does not generate: remove the client"
+        raise label + " declares itself as the client " + name + ", which php-sdk does not generate: remove the client"
       }
       let taken = seen.filter { other => namespaceKey(other) == namespaceKey(name) }
       if (taken.length > 0) {
-        raise "module at " + rootPath + " has the clients " + (taken[0] ?? "") + " and " + name + ", which generate into one PHP namespace: remove one"
+        raise label + " has the clients " + (taken[0] ?? "") + " and " + name + ", which generate into one PHP namespace: remove one"
       }
       seen + [name]
     }
@@ -520,19 +592,26 @@ type Mod {
       [] :: [String!]!
     } else {
       let composer = parsedJson(contentsOf("composer.json"))
-      let repositories = if (composer.fields.contains("repositories")) { rawEntries(composer.field(["repositories"])) } else { [] :: [String!]! }
-      let repoPaths = repositories
-        .filter { repository => stringField(parsedJson(repository), "type") == "path" }
-        .map { repository => stringField(parsedJson(repository), "url") }
-      let usesSdk = repoPaths.filter { path => path.trimPrefix("./").trimSuffix("/") == "sdk" }.length > 0
-      let external = (repoPaths + autoloadPaths(composer, "autoload") + autoloadPaths(composer, "autoload-dev"))
+      let external = (repositoryPaths + autoloadPaths(composer, "autoload") + autoloadPaths(composer, "autoload-dev"))
         .filter { path => leavesModule(path) }
         .map { path => "Composer reads " + path + " outside the module" }
       let vendorDir = if (composer.fields.contains("config")) { stringField(composer.field(["config"]), "vendor-dir") } else { "" }
-      (if (usesSdk) { [] :: [String!]! } else { ["composer.json has no path repository ./sdk"] }) +
+      (if (usesSdkRepository) { [] :: [String!]! } else { ["composer.json has no path repository ./sdk"] }) +
         external +
         (if (vendorDir == "" or vendorDir == "vendor") { [] :: [String!]! } else { ["composer.json moves vendor-dir to " + vendorDir] })
     }
+  }
+
+  let repositoryPaths: [String!]! {
+    let composer = parsedJson(contentsOf("composer.json"))
+    let repositories = if (composer.fields.contains("repositories")) { rawEntries(composer.field(["repositories"])) } else { [] :: [String!]! }
+    repositories
+      .filter { repository => stringField(parsedJson(repository), "type") == "path" }
+      .map { repository => stringField(parsedJson(repository), "url") }
+  }
+
+  let usesSdkRepository: Boolean! {
+    repositoryPaths.filter { path => path.trimPrefix("./").trimSuffix("/") == "sdk" }.length > 0
   }
 
   let autoloadPaths(composer: JSONValue!, section: String!): [String!]! {
