@@ -677,4 +677,18 @@ type E2e {
       .sync
     null
   }
+
+  """
+  The codegen unit tests, against a committed schema that holds core and one client.
+  """
+  pub sdkCodegenUnitCheck(ws: Workspace!): Void @check {
+    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
+    mod.phpContainer
+      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
+      .withWorkdir("/sdk")
+      .withExec(["composer", "install"])
+      .withExec(["vendor/bin/phpunit", "tests/Unit/Codegen"])
+      .sync
+    null
+  }
 }
