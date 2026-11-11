@@ -76,6 +76,52 @@ default):
 dagger module init php --name my-module --template minimal
 ```
 
+## Function roles
+
+A role attribute next to `#[DaggerFunction]` registers the function for a CLI command. The
+SDK rejects a role function that does not match its row in the table. An argument is
+optional when it has a default value, a nullable type or `#[DefaultPath]`; others are required.
+
+| Attribute | Command | Return type | Required arguments | Engine API since |
+| --- | --- | --- | --- | --- |
+| `#[Check]` | `dagger check` | `Container` or `void` | `Workspace` only | [`v0.19.7`](https://github.com/dagger/dagger/blob/v0.19.7/core/schema/module.go) |
+| `#[Generate]` | `dagger generate` | non-null `Changeset` | `Workspace` only | [`v0.19.11`](https://github.com/dagger/dagger/blob/v0.19.11/core/schema/module.go) |
+| `#[Up]` | `dagger start`, alias `dagger up` | non-null `Service` | `Workspace` only | [`v0.20.4`](https://github.com/dagger/dagger/blob/v0.20.4/core/schema/module.go) |
+| `#[Agent]` | `dagger agent` | non-null `LLM` | exactly one required `LLM`; any other required argument is `Workspace` or `Agent` | [`v1.0.0-beta.10`](https://github.com/dagger/dagger/blob/v1.0.0-beta.10/core/schema/module.go) |
+
+The [engine floor](#engine-requirement), `v1.0.0-beta.17`, has all four APIs and commands.
+This repository runs no test of a role on the floor engine.
+
+Inside a `#[DaggerObject]` class, with the attributes from `Dagger\Attribute`:
+```php
+#[DaggerFunction, Check]
+public function lint(): Container
+{
+    return dag()->container()->from('php:8.4-cli')->withExec(['php', '--version']);
+}
+
+#[DaggerFunction, Generate]
+public function generateFile(): Changeset
+{
+    return dag()
+        ->directory()
+        ->withNewFile('generated.txt', 'generated')
+        ->changes(dag()->directory());
+}
+
+#[DaggerFunction, Up]
+public function serve(): Service
+{
+    return dag()->container()->from('alpine:latest')->asService();
+}
+
+#[DaggerFunction, Agent]
+public function review(LLM $base): LLM
+{
+    return $base->withPrompt('Review the code in this module');
+}
+```
+
 ## Generate SDK files
 
 For every recorded PHP module scope:
@@ -101,7 +147,8 @@ See [`php-sdk.dang`](./php-sdk.dang) for the full type surface.
 
 Generation writes `sdk/` and a Dang entrypoint in `sdk/entrypoint/`: `main.dang`,
 `types.dang`, `build.dang` and `dang.toml`. `dagger-module.toml` names the
-entrypoint, and the engine runs a function through it. Commit `sdk/` and
+entrypoint, and the engine runs a function through it, including its
+[role](#function-roles). Commit `sdk/` and
 `composer.lock`: a module loaded from Git needs them.
 
 A module moves to the entrypoint when it is self-contained. A module that has any
