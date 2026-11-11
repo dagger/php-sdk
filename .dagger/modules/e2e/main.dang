@@ -610,4 +610,18 @@ type E2e {
       .sync
     null
   }
+
+  """
+  The PSR-12 style of the PHP library.
+  """
+  pub sdkStyleCheck(ws: Workspace!): Void @check {
+    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
+    mod.phpContainer
+      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
+      .withWorkdir("/sdk")
+      .withExec(["composer", "install"])
+      .withExec(["vendor/bin/phpcs"])
+      .sync
+    null
+  }
 }

@@ -41,7 +41,8 @@ final readonly class EngineNaming
      * The UTF-8 bytes of every non-ASCII rune Go's unicode.IsSpace accepts. PHP
      * matches them bytewise, as Go's byte loop reads the name after trimming.
      */
-    private const UNICODE_SPACE = '(?:\xc2[\x85\xa0]|\xe1\x9a\x80|\xe2\x80[\x80-\x8a\xa8\xa9\xaf]|\xe2\x81\x9f|\xe3\x80\x80)+';
+    private const UNICODE_SPACE = '(?:\xc2[\x85\xa0]|\xe1\x9a\x80|\xe2\x80[\x80-\x8a\xa8\xa9\xaf]'
+        . '|\xe2\x81\x9f|\xe3\x80\x80)+';
 
     /**
      * The name the engine gives an enum member on the API views before the

@@ -103,7 +103,8 @@ class CallDispatcherTest extends TestCase
     #[Test]
     public function itCarriesStateThroughAReturnedObject(): void
     {
-        $result = $this->dispatcher()->call('Main', '{"greeting":"hi","modes":["Slow"]}', 'withMode', '{"mode":"Fast"}');
+        $result = $this->dispatcher()
+            ->call('Main', '{"greeting":"hi","modes":["Slow"]}', 'withMode', '{"mode":"Fast"}');
 
         self::assertSame(
             ['greeting' => 'hi', 'modes' => ['Slow', 'Fast']],
@@ -141,7 +142,9 @@ class CallDispatcherTest extends TestCase
         yield 'missing argument' => ['missing the required argument value', 'Main', '{}', 'required', '{}'];
         yield 'unknown argument' => ['has no argument gone', 'Main', '{}', 'greet', '{"gone":1}'];
         yield 'bad type' => ['int is not a value of the type string', 'Main', '{}', 'required', '{"value":1}'];
-        yield 'null for a required argument' => ['non-nullable type string', 'Main', '{}', 'required', '{"value":null}'];
+        yield 'null for a required argument' => [
+            'non-nullable type string', 'Main', '{}', 'required', '{"value":null}',
+        ];
         yield 'invalid arguments' => ['fnArgs is not valid JSON', 'Main', '{}', 'greet', '{'];
         yield 'invalid state' => ['receiverValue is not valid JSON', 'Main', '{', 'greet', '{}'];
         yield 'arguments that are not an object' => ['fnArgs is not a JSON object', 'Main', '{}', 'greet', '1'];
