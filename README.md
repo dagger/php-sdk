@@ -193,6 +193,15 @@ not a release, is later than `v1.0.0-beta.27` or is below `v1.0.0-beta.17`, and 
 a pin on a module that keeps the PHP runtime, which the engine generates for its
 manifest's `engineVersion`. The checks here pin only `v1.0.0-beta.24`.
 
+`dagger.toml` records the setting for a module's scope under
+`[sdks.<name>.scopes."<path>".settings]`. `dagger generate` passes that record to
+the SDK. `mod` reads the record itself when no setting is passed. `dagger call
+php-sdk mod --path my-module generate` therefore generates for the same release.
+In `mod`, a setting passed to `php-sdk` wins over the record. In `dagger
+generate`, the record wins over `[modules.php-sdk.settings]`. `mod` refuses
+conflicting or case-colliding `targetVersion` records. It does not check the rest of
+the config. `dagger generate` validates the whole config itself.
+
 Passing checks on a released engine show what generation writes and that calls work.
 They do not show that `dang.toml` selects a view. No check here shows that
 `DAGGER_CLIENT_VERSION` selects one.
