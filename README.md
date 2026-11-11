@@ -132,10 +132,11 @@ from the built-in runtime stays on it until you rename one of the cases and upda
 references. The engine can still update the workspace's `dagger.lock` when the session
 ends. A generated entrypoint gets this check the next time it is generated.
 
-From `v1.0.0-beta.26` the engine names `Base64` `BASE64`. The collision check still
-names it `BASE_64`. A module with both `Base64` and `BASE64` therefore passes the check,
-and the engine drops one case without an error. A module with both `Base64` and
-`BASE_64` is refused, though the engine would accept it.
+The check names the cases as the engine does for the module's target version. From
+`v1.0.0-beta.26` the engine names `Base64` `BASE64`, not `BASE_64`, so `Base64` and
+`BASE64` collide there and `Base64` and `BASE_64` do not. For such a target, generation
+asks the engine for the names. For a target below `v1.0.0-beta.26`, the check uses the
+earlier naming rules. It also uses them when the engine has no `naming` API.
 
 ### Git
 

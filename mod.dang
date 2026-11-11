@@ -172,7 +172,11 @@ type Mod {
       .withDirectory("/src/sdk", sdk)
       .withWorkdir("/src")
       .withExec(composerCommand)
-      .withExec(["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint"])
+      .withEnvVariable("DAGGER_CLIENT_VERSION", targetEngineVersion)
+      .withExec(
+        ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint"],
+        experimentalPrivilegedNesting: true,
+      )
     let entrypoint = describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang)
     # Generated files are replaced whole: merging would keep client classes the
     # target schema no longer has.

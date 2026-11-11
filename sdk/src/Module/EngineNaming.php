@@ -49,9 +49,10 @@ final readonly class EngineNaming
      * dagger/dagger core/gqlformat.go, identical at beta.17, beta.21, beta.22 and
      * beta.25, and ToScreamingSnake in strcase v0.3.0: a rule that only
      * approximates them refuses valid enums or misses collisions.
-     * From the cut, which PhpSdk.targetEngineVersion is past, the engine names
-     * members by engine/naming instead, which this does not follow yet: Base64
-     * becomes BASE64 there, not BASE_64.
+     * From the cut, the engine names members by engine/naming instead, where
+     * Base64 becomes BASE64, not BASE_64. Generation asks the engine for those
+     * names through ModuleNaming.enumMemberNames, and uses this rule only on a
+     * view without that API.
      *
      * The input is a PHP case name, [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*. Bytes
      * from 0x80 can spell Unicode spaces, which the engine trims, so a name can

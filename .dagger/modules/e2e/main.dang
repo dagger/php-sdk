@@ -430,6 +430,12 @@ type E2e {
       "a generated entrypoint with include rules",
     )
 
+    let encoding = "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nenum Encoding\n{\n    case Base64;\n    case BASE64;\n}\n"
+    let collision = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/src/Encoding.php", encoding)).cwd rescue {
+      err: GraphQLError => err.message + "\n" + err.extensions
+    }
+    assertContains(collision, "its cases Base64 and BASE64 the same name, BASE64", "cases the engine names alike should be refused, on an engine that serves naming (v1.0.0-beta.26+)")
+
     let fat = kept + entrypointTable
     let keptRuntime = contentsOf(generatedEntrypoint(migrated.withNewFile("/" + manifest, fat)), manifest)
     assertContains(keptRuntime, "[runtime]", "a runtime named beside a generated entrypoint should be kept for older engines")
