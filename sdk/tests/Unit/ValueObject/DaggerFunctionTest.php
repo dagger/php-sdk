@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dagger\Tests\Unit\ValueObject;
 
+use Dagger\Agent;
 use Dagger\Attribute\DaggerObject;
 use Dagger\Changeset;
 use Dagger\Container;
@@ -11,6 +12,7 @@ use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
 use Dagger\File;
 use Dagger\Json;
+use Dagger\LLM;
 use Dagger\Service;
 use Dagger\Tests\Unit\Fixture\DaggerObjectWithDaggerFunctions;
 use Dagger\ValueObject\Argument;
@@ -64,6 +66,18 @@ class DaggerFunctionTest extends TestCase
         }))->getMethod('serve');
 
         self::assertTrue(DaggerFunction::fromReflection($method)->withUp);
+    }
+
+    #[Test]
+    public function itLetsAnAgentRequireItsBaseAWorkspaceAndAnAgent(): void
+    {
+        $method = (new ReflectionClass(new #[DaggerObject] class () {
+            #[\Dagger\Attribute\DaggerFunction]
+            #[\Dagger\Attribute\Agent]
+            public function assist(LLM $base, Workspace $workspace, Agent $owner, ?string $hint = null): LLM {return $base;}
+        }))->getMethod('assist');
+
+        self::assertTrue(DaggerFunction::fromReflection($method)->withAgent);
     }
 
     #[Test]
@@ -208,6 +222,79 @@ class DaggerFunctionTest extends TestCase
                 public function serve(): array {return [];}
             }))->getMethod('serve'),
             Invalid::upReturnsService('serve', 'array'),
+        ];
+
+        yield 'agent that requires an argument' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                public function assist(LLM $base, string $name): LLM {return $base;}
+            }))->getMethod('assist'),
+            Invalid::agentRequiresArgument('assist', 'name'),
+        ];
+
+        yield 'agent that requires a list' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                public function assist(LLM $base, #[\Dagger\Attribute\ListOfType('string')] array $names): LLM {return $base;}
+            }))->getMethod('assist'),
+            Invalid::agentRequiresArgument('assist', 'names'),
+        ];
+
+        yield 'agent that requires two bases' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                public function assist(LLM $base, LLM $other): LLM {return $base;}
+            }))->getMethod('assist'),
+            Invalid::agentRequiresArgument('assist', 'other'),
+        ];
+
+        yield 'agent with an optional second LLM' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                public function assist(LLM $base, ?LLM $other = null): LLM {return $base;}
+            }))->getMethod('assist'),
+            Invalid::agentTakesOneBase('assist'),
+        ];
+
+        yield 'agent without a base' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                public function assist(): LLM {return new LLM();}
+            }))->getMethod('assist'),
+            Invalid::agentTakesOneBase('assist'),
+        ];
+
+        yield 'agent with an optional base' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                public function assist(?LLM $base): LLM {return new LLM();}
+            }))->getMethod('assist'),
+            Invalid::agentTakesOneBase('assist'),
+        ];
+
+        yield 'agent that may return null' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                public function assist(LLM $base): ?LLM {return null;}
+            }))->getMethod('assist'),
+            Invalid::agentReturnsLLM('assist', LLM::class),
+        ];
+
+        yield 'agent that returns a list' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Agent]
+                #[\Dagger\Attribute\ReturnsListOfType('string')]
+                public function assist(LLM $base): array {return [];}
+            }))->getMethod('assist'),
+            Invalid::agentReturnsLLM('assist', 'array'),
         ];
     }
 

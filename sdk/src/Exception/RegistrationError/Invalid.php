@@ -67,4 +67,32 @@ final class Invalid extends \RuntimeException implements RegistrationError
             Up functions must return a non-null Service.
             TEXT);
     }
+
+    public static function agentRequiresArgument(
+        string $methodName,
+        string $argName,
+    ): self {
+        return new self(<<<TEXT
+            '$methodName' is labeled as an agent, but requires '$argName'.
+            Agents may only require their base LLM, a Workspace or an Agent; every other argument must be optional.
+            TEXT);
+    }
+
+    public static function agentTakesOneBase(string $methodName): self
+    {
+        return new self(<<<TEXT
+            '$methodName' is labeled as an agent, but does not require exactly one LLM.
+            Agents must require one non-null LLM, the base they extend, and take no other LLM.
+            TEXT);
+    }
+
+    public static function agentReturnsLLM(
+        string $methodName,
+        string $returnType,
+    ): self {
+        return new self(<<<TEXT
+            '$methodName' is labeled as an agent, but returns '$returnType'.
+            Agents must return a non-null LLM.
+            TEXT);
+    }
 }

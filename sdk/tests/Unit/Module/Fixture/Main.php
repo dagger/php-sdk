@@ -9,6 +9,7 @@ use Dagger\Changeset;
 use Dagger\Container;
 use Dagger\Directory;
 use Dagger\Json;
+use Dagger\LLM;
 use Dagger\Platform;
 use Dagger\Service;
 use Dagger\Workspace;
@@ -148,6 +149,13 @@ class Main
     public function serve(Workspace $workspace): Service
     {
         return $workspace->directory('.')->dockerBuild()->asService();
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Agent]
+    public function assist(LLM $base, Workspace $workspace): LLM
+    {
+        return $base;
     }
 
     #[Attribute\DaggerFunction]

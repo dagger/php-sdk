@@ -181,6 +181,10 @@ final readonly class DangEntrypointRenderer
             $lines[] = '  .withUp';
         }
 
+        if ($function->withAgent) {
+            $lines[] = '  .withAgent';
+        }
+
         foreach ($function->arguments as $argument) {
             $lines[] = '  ' . self::argument($argument);
         }
