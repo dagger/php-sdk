@@ -125,14 +125,32 @@ type PhpSdk {
     null
   }
 
-  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion): Mod! {
+  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion, laterEngine: Boolean! = false): Mod! {
     Mod(
       rootPath: path,
       ws: ws,
       skipGenerateFilename: skipGenerateFilename,
       targetEngineVersion: target,
       givenName: name,
+      declaresLaterEngine: laterEngine,
     )
+  }
+
+  """
+  Whether the module config in a workspace-root-relative directory declares an
+  engineVersion later than targetEngineVersion, the latest release this SDK can
+  generate for. A pinned targetVersion does not change the comparison. Mod reads
+  its own manifest, but only PhpSdk can compare releases.
+  """
+  let declaresLaterEngine(ws: Workspace!, dir: String!): Boolean! {
+    let path = moduleConfigPath(ws, dir)
+    if (path == "") { return false }
+    let contents = ws.directory("/", include: [path]).file(path).contents
+    let raw = if (path.hasSuffix(".toml")) { JSON.encode(TOML.decode(contents)) } else { contents }
+    let declared = json.withContents((raw :: Dagger.JSON!)).field(["engineVersion"]).asString rescue {
+      err: Error => ""
+    }
+    releasePrecedes(targetEngineVersion, declared)
   }
 
   """
@@ -142,7 +160,7 @@ type PhpSdk {
   """
   let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion): Mod! {
     let target = targetRelease(subject, setting)
-    let mod = modAt(path, ws, name, target)
+    let mod = modAt(path, ws, name, target, declaresLaterEngine(ws, path))
     if (setting != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
       raise subject + " pins targetVersion " + target + ", which applies to the generated entrypoint only: this module keeps the PHP runtime, which generates for the engineVersion of its manifest. Remove targetVersion from the scope's settings in dagger.toml"
     }
@@ -219,10 +237,18 @@ type PhpSdk {
   Whether a module config exists in a workspace-root-relative directory.
   """
   let hasModuleConfig(ws: Workspace!, dir: String!): Boolean! {
-    moduleConfigFilenames.filter { filename =>
-      let path = if (dir == ".") { filename } else { dir + "/" + filename }
-      ws.directory("/", include: [path]).exists(path)
-    }.length > 0
+    moduleConfigPath(ws, dir) != ""
+  }
+
+  """
+  The module config in a workspace-root-relative directory, dagger-module.toml
+  first, or an empty string when there is none.
+  """
+  let moduleConfigPath(ws: Workspace!, dir: String!): String! {
+    let paths = moduleConfigFilenames
+      .map { filename => if (dir == ".") { filename } else { dir + "/" + filename } }
+      .filter { path => ws.directory("/", include: [path]).exists(path) }
+    paths[0] ?? ""
   }
 
   let normalizePath(path: String!): String! {
