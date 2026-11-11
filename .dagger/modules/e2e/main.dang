@@ -13,7 +13,6 @@ type E2e {
   let entrypointName: String! = "entrypoint-app"
   let target: String! = "v1.0.0-beta.25"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
-  let unitTestFilter: String! = "EntrypointMetadataTest|DangEntrypointRendererTest|EngineNamingTest|CallDispatcherTest|ValueCodecTest"
 
   let assert(condition: Boolean!, message: String!): Void {
     if (condition == false) { raise message }
@@ -569,7 +568,7 @@ type E2e {
       .withExec(["composer", "install"])
       .withMountedFile("/schema.json", mod.clientSchema)
       .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
-      .withExec(["vendor/bin/phpunit", "--filter", unitTestFilter])
+      .withExec(["vendor/bin/phpunit", "--group", "unit"])
       .sync
     null
   }

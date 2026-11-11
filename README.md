@@ -16,6 +16,13 @@ dagger/dagger; [`sdk/VENDOR.md`](./sdk/VENDOR.md) records the commit. Generation
 writes them into each module with a client generated against
 `v1.0.0-beta.25`.
 
+## PHP version
+
+A module requires PHP `^8.2`, the floor of the library in `sdk/composer.json`. The
+module image builds and runs with PHP 8.4. The library's dev tooling (PHPUnit 12)
+needs PHP 8.3 or later. Modules do not need the dev tooling, so their floor stays
+`^8.2`.
+
 ## Engine requirement
 
 This module needs an engine from `v1.0.0-beta.17`, the oldest release the generated
