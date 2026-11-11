@@ -14,7 +14,7 @@ module clients, which this SDK does not generate yet; see
 The PHP library and codegen live under [`sdk/`](./sdk), vendored from
 dagger/dagger; [`sdk/VENDOR.md`](./sdk/VENDOR.md) records the commit. Generation
 writes them into each module with a client generated against
-`v1.0.0-beta.25`.
+`v1.0.0-beta.27`.
 
 ## PHP version
 
@@ -32,9 +32,9 @@ The entrypoint failed on `v1.0.0-beta.16`. That engine sends an enum argument by
 name, `LOW` for `case Low`, which PHP cannot read. dagger/dagger
 [`67f0790ef5`](https://github.com/dagger/dagger/commit/67f0790ef53d1af013c7191eb3b730d38b93ab33)
 fixes this. The run stopped at that failure, so other modules on that release are
-untested and not supported. Modules target `v1.0.0-beta.25`: the floor only says
+untested and not supported. Modules target `v1.0.0-beta.27`: the floor only says
 which engines the SDK and the entrypoints it generates run on. Those floor results were
-for modules targeting `v1.0.0-beta.21`, and have not run again for `v1.0.0-beta.25`.
+for modules targeting `v1.0.0-beta.21`, and have not run again for `v1.0.0-beta.27`.
 
 Earlier versions of this module documented `v1.0.0-beta.12`. On an older engine,
 `dagger generate` and `dagger module init` now stop with a message that names the
@@ -132,6 +132,11 @@ from the built-in runtime stays on it until you rename one of the cases and upda
 references. The engine can still update the workspace's `dagger.lock` when the session
 ends. A generated entrypoint gets this check the next time it is generated.
 
+From `v1.0.0-beta.26` the engine names `Base64` `BASE64`. The collision check still
+names it `BASE_64`. A module with both `Base64` and `BASE64` therefore passes the check,
+and the engine drops one case without an error. A module with both `Base64` and
+`BASE_64` is refused, though the engine would accept it.
+
 ### Git
 
 The engine reads the entrypoint from the module's files, which `.gitignore` filters.
@@ -143,7 +148,7 @@ applies. Remove that rule yourself.
 ### dang.toml
 
 The SDK manages the Dagger version in `sdk/entrypoint/dang.toml`, and sets it to the
-version the module's client is generated against, `v1.0.0-beta.25`. Generation
+version the module's client is generated against, `v1.0.0-beta.27`. Generation
 replaces `dagger = true` or an older version on the `Dagger` import, requires
 `dang = "2.1"`, and keeps every other setting. Comments and formatting are lost, and
 keys are written in alphabetical order.
@@ -170,20 +175,20 @@ may reject the import.
 The generated files carry the same version in two channels:
 
 - `dang.toml`: dagger/dagger#14902 selects the module's API view from its `Dagger`
-  import. The change is on dagger/dagger `main` as of `7e9eaacc`, and
-  `v1.0.0-beta.25` predates it. Its runtime effect is not verified by this SDK's checks.
+  import. `v1.0.0-beta.26` is the first release with that change. Its runtime effect
+  is not verified by this SDK's checks.
 - `DAGGER_CLIENT_VERSION` on the exec that runs the module: dagger/dagger#14881 makes
   the engine read it. `v1.0.0-beta.22` is the first release with that change.
 
-The version stays `v1.0.0-beta.25`, the last release before the identifier-casing cut,
-until the PHP codegen is ported to those rules. dagger/dagger gates the cut at
-`v1.0.0-beta.26`. From `v1.0.0-beta.22`, each release has an API view of its own, and
-the client is generated against the `v1.0.0-beta.25` view.
+The version is past the identifier-casing cut, which dagger/dagger gates at
+`v1.0.0-beta.26`. The engine names the module's types, functions and enum members by
+the new rules. From `v1.0.0-beta.22`, each release has an API view of its own, and the
+client is generated against the `v1.0.0-beta.27` view.
 
 The `targetVersion` setting, or `--target-version`, pins a module to another release
-from `v1.0.0-beta.17` to `v1.0.0-beta.25`, which the client schema,
+from `v1.0.0-beta.17` to `v1.0.0-beta.27`, which the client schema,
 `DAGGER_CLIENT_VERSION` and `dang.toml` then use. Generation refuses a value that is
-not a release, is later than `v1.0.0-beta.25` or is below `v1.0.0-beta.17`, and refuses
+not a release, is later than `v1.0.0-beta.27` or is below `v1.0.0-beta.17`, and refuses
 a pin on a module that keeps the PHP runtime, which the engine generates for its
 manifest's `engineVersion`. The checks here pin only `v1.0.0-beta.24`.
 
