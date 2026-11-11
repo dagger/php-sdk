@@ -100,6 +100,10 @@ class EntrypointCommand extends Command
                 $func = $func->withCheck();
             }
 
+            if ($daggerFunction->withGenerator) {
+                $func = $func->withGenerator();
+            }
+
             foreach ($daggerFunction->arguments as $argument) {
                 $func = $func->withArg(
                     name: $argument->name,

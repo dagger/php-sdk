@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace DaggerModule;
 
 use Dagger\Attribute;
+use Dagger\Changeset;
 use Dagger\Container;
 use Dagger\Directory;
 use Dagger\Json;
@@ -132,6 +133,13 @@ class Main
     #[Attribute\Check]
     public function lint(Workspace $ws): void
     {
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Generate]
+    public function generate(Workspace $workspace): Changeset
+    {
+        return $workspace->directory('.')->changes($workspace->directory('.'));
     }
 
     #[Attribute\DaggerFunction]

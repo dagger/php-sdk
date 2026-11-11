@@ -173,6 +173,10 @@ final readonly class DangEntrypointRenderer
             $lines[] = '  .withCheck';
         }
 
+        if ($function->withGenerator) {
+            $lines[] = '  .withGenerator';
+        }
+
         foreach ($function->arguments as $argument) {
             $lines[] = '  ' . self::argument($argument);
         }
