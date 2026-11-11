@@ -156,6 +156,7 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 
 - `[[dependencies]]`
 - `include`, `exclude`, `blueprint` or `toolchains`
+- `disableDefaultFunctionCaching = true` or a `[[clients]]` table
 - a `source` other than the module directory
 - no `composer.json`, or one without the `./sdk` path repository
 - a Composer path or autoload path outside the module

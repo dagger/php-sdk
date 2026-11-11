@@ -398,14 +398,18 @@ type Mod {
   Why the generated entrypoint cannot run this module. The entrypoint builds from
   the module's own directory with the Composer settings the module has, so what
   reaches outside that directory, or changes what it loads, is not preserved.
+  The engine reads pre-v2 clients and disableDefaultFunctionCaching only from a
+  runtime manifest.
   """
   let entrypointBlockers: [String!]! {
-    let declared = ["include", "exclude", "blueprint", "toolchains"]
+    let declared = ["include", "exclude", "blueprint", "toolchains", "clients"]
       .filter { field => declares(field) }
       .map { field => "it declares " + field }
+    let cachingDisabled = declares("disableDefaultFunctionCaching") and toString(manifest.field(["disableDefaultFunctionCaching"]).contents).trimSpace == "true"
+    let cachingBlocker = if (cachingDisabled) { ["it sets disableDefaultFunctionCaching"] } else { [] :: [String!]! }
     let source = stringField(manifest, "source").trimPrefix("./").trimSuffix("/")
     let sourceBlocker = if (source == "" or source == ".") { [] :: [String!]! } else { ["its source is " + source] }
-    declared + sourceBlocker + composerBlockers
+    declared + cachingBlocker + sourceBlocker + composerBlockers
   }
 
   let composerBlockers: [String!]! {
