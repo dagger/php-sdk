@@ -640,4 +640,21 @@ type E2e {
       .sync
     null
   }
+
+  """
+  The Composer metadata and PSR-4 layout of the PHP library, against a client of the target schema.
+  """
+  pub sdkComposerCheck(ws: Workspace!): Void @check {
+    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
+    mod.phpContainer
+      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
+      .withWorkdir("/sdk")
+      .withExec(["composer", "validate", "--strict"])
+      .withExec(["composer", "install"])
+      .withMountedFile("/schema.json", mod.clientSchema)
+      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
+      .withExec(["composer", "dump-autoload", "--classmap-authoritative", "--strict-psr", "--strict-ambiguous"])
+      .sync
+    null
+  }
 }
