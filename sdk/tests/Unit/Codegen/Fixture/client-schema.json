@@ -1,0 +1,98 @@
+{
+  "__schemaVersion": "v1.0.0-beta.25",
+  "__schema": {
+    "types": [
+      {"kind": "SCALAR", "name": "ID"},
+      {
+        "kind": "ENUM",
+        "name": "NetworkProtocol",
+        "enumValues": [{"name": "TCP"}, {"name": "UDP"}]
+      },
+      {
+        "kind": "OBJECT",
+        "name": "Query",
+        "fields": [
+          {
+            "name": "container",
+            "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Container"}}
+          },
+          {
+            "name": "myLinter",
+            "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "MyLinter"}},
+            "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]
+          }
+        ]
+      },
+      {
+        "kind": "OBJECT",
+        "name": "Container",
+        "fields": [
+          {"name": "id", "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}}}
+        ]
+      },
+      {
+        "kind": "OBJECT",
+        "name": "MyLinter",
+        "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}],
+        "fields": [
+          {
+            "name": "lint",
+            "args": [
+              {
+                "name": "source",
+                "type": {"kind": "NON_NULL", "ofType": {"kind": "SCALAR", "name": "ID"}},
+                "directives": [{"name": "expectedType", "args": [{"name": "name", "value": "\"Container\""}]}]
+              },
+              {"name": "level", "type": {"kind": "ENUM", "name": "MyLinterLevel"}}
+            ],
+            "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "MyLinterReport"}},
+            "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]
+          },
+          {
+            "name": "rule",
+            "type": {"kind": "NON_NULL", "ofType": {"kind": "INTERFACE", "name": "MyLinterRule"}},
+            "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]
+          }
+        ]
+      },
+      {
+        "kind": "OBJECT",
+        "name": "MyLinterReport",
+        "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}],
+        "fields": [
+          {
+            "name": "fixed",
+            "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "Container"}},
+            "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]
+          },
+          {
+            "name": "level",
+            "type": {"kind": "NON_NULL", "ofType": {"kind": "ENUM", "name": "MyLinterLevel"}},
+            "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]
+          }
+        ]
+      },
+      {
+        "kind": "ENUM",
+        "name": "MyLinterLevel",
+        "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}],
+        "enumValues": [
+          {"name": "LOW", "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]},
+          {"name": "HIGH", "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]}
+        ]
+      },
+      {
+        "kind": "INTERFACE",
+        "name": "MyLinterRule",
+        "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}],
+        "fields": [
+          {
+            "name": "report",
+            "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "MyLinterReport"}},
+            "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]
+          }
+        ]
+      }
+    ]
+  }
+}

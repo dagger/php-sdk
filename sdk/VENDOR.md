@@ -11,6 +11,12 @@ Local changes to the vendored files:
 - `src/Attribute/Doc.php` also targets properties, for the same reason.
 - `src/Codegen/CodeWriter.php` creates its target directory and fails when a write
   fails. The upstream tree commits `generated/`, so it never needs either.
+- `src/Codegen/CodeWriter.php`, `src/Codegen/Codegen.php`,
+  `src/Codegen/Introspection/NewCodegenVisitor.php` and `src/Command/CodegenCommand.php`
+  partition the schema by `@sourceMap(module:)`. `--core`, the default, generates what
+  no module contributes. `--client <module>` generates what the module contributes into
+  `generated/Clients/<Name>/`, in namespace `Dagger\Clients\<Name>`, and records the
+  module in that directory's `.client-module`.
 - `tests/Unit/Service/Serialisation/SerialiserTest.php` uses `Id`. `ContainerId`
   exists upstream only as a stale committed class, which a regenerated client lacks.
 - `src/ValueObject/DaggerFunction.php` accepts a check with a required
@@ -21,7 +27,8 @@ Local changes to the vendored files:
 
 Files this repository adds, which have no counterpart in dagger/dagger:
 
-- `src/Module/`, `bin/dagger-module`, `tests/Unit/Module/` and this file.
+- `src/Module/`, `bin/dagger-module`, `tests/Unit/Module/`, `tests/Unit/Codegen/CodegenTest.php`,
+  `tests/Unit/Codegen/Fixture/` and this file.
 
 `.gitignore` replaces the upstream one: it ignores `vendor/`, `generated/` and `.cache/`,
 not the upstream tree's tooling files.

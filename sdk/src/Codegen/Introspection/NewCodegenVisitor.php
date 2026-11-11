@@ -24,13 +24,16 @@ class NewCodegenVisitor extends CodeWriter
 {
     /**
      * @param string[] $interfaceNames names of the schema's interface types
+     * @param array<string, string> $classNamespaces namespace of each class outside core, by class name
      */
     public function __construct(
         string $targetDirectory,
         private readonly bool $supportsNullableObjects = true,
         private readonly array $interfaceNames = [],
+        string $namespace = CodeWriter::NAMESPACE,
+        private readonly array $classNamespaces = [],
     ) {
-        parent::__construct($targetDirectory);
+        parent::__construct($targetDirectory, $namespace);
     }
 
     public function visitScalar(IntrospectionType $type): void
@@ -515,7 +518,7 @@ class NewCodegenVisitor extends CodeWriter
 
     // ---- Formatting helpers ----
 
-    private function formatPhpClassName(string $objectName): string
+    public static function formatPhpClassName(string $objectName): string
     {
         $objectName = str_replace(['ID', 'JSON'], ['Id', 'Json'], $objectName);
 
@@ -527,7 +530,7 @@ class NewCodegenVisitor extends CodeWriter
 
     private function formatPhpFqcn(string $className): string
     {
-        return '\\' . CodeWriter::NAMESPACE . '\\' . $className;
+        return '\\' . ($this->classNamespaces[$className] ?? CodeWriter::NAMESPACE) . '\\' . $className;
     }
 
     private function formatScalarType(IntrospectionTypeRef $typeRef): string

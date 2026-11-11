@@ -6,10 +6,12 @@ use Dagger\Codegen\Codegen;
 use Dagger\Codegen\Introspection\IntrospectionSchema;
 use Dagger\Codegen\SchemaGenerator;
 use Dagger\Connection;
+use InvalidArgumentException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
@@ -41,11 +43,27 @@ class CodegenCommand extends Command
             'Path to the schema json file',
             null
         );
+        $this->addOption(
+            'core',
+            null,
+            InputOption::VALUE_NONE,
+            'Generate the types and fields no module contributes, the default',
+        );
+        $this->addOption(
+            'client',
+            null,
+            InputOption::VALUE_REQUIRED,
+            'Generate the types and fields the module contributes, into generated/Clients',
+        );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
+        $module = $input->getOption('client');
+        if ($input->getOption('core') && $module !== null) {
+            throw new InvalidArgumentException('--core and --client exclude each other');
+        }
 
         if ($input->getOption('schema-file') !== null && file_exists($input->getOption('schema-file'))) {
             $fileContents = file_get_contents($input->getOption('schema-file'));
@@ -56,7 +74,7 @@ class CodegenCommand extends Command
             $schema = (new SchemaGenerator($client))->getSchema();
         }
 
-        $codegen = new Codegen($schema, self::WRITE_DIR, $io);
+        $codegen = new Codegen($schema, self::WRITE_DIR, $io, $module);
         $codegen->generate();
 
         return Command::SUCCESS;
