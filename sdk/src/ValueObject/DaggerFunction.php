@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Dagger\ValueObject;
 
 use Dagger\Attribute;
+use Dagger\Changeset;
 use Dagger\Container;
 use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
@@ -24,9 +25,13 @@ final readonly class DaggerFunction
         public array $arguments,
         public ListOfType|Type $returnType,
         public bool $withCheck = false,
+        public bool $withGenerator = false,
     ) {
         if ($this->withCheck) {
             $this->validateCheck();
+        }
+        if ($this->withGenerator) {
+            $this->validateGenerator();
         }
     }
 
@@ -68,6 +73,7 @@ final readonly class DaggerFunction
                 arguments: $parameters,
                 returnType: new Type($method->getDeclaringClass()->name),
                 withCheck: $method->getAttributes(Attribute\Check::class) !== [],
+                withGenerator: $method->getAttributes(Attribute\Generate::class) !== [],
             )
             : new self(
                 name: $method->name,
@@ -75,6 +81,7 @@ final readonly class DaggerFunction
                 arguments: $parameters,
                 returnType: self::getReturnType($method),
                 withCheck: $method->getAttributes(Attribute\Check::class) !== [],
+                withGenerator: $method->getAttributes(Attribute\Generate::class) !== [],
             );
     }
 
@@ -122,6 +129,26 @@ final readonly class DaggerFunction
             throw Invalid::checkReturnsContainerOrVoid(
                 $this->name,
                 $this->returnType->name,
+            );
+        }
+    }
+
+    private function validateGenerator(): void
+    {
+        foreach ($this->arguments as $arg) {
+            if ($arg->isRequired() && !($arg->type instanceof Type && Workspace::class === $arg->type->name)) {
+                throw Invalid::generatorRequiresOnlyWorkspace(
+                    $this->name,
+                    $arg->name,
+                );
+            }
+        }
+
+        $returnType = $this->returnType instanceof Type ? $this->returnType->name : 'array';
+        if (Changeset::class !== $returnType || $this->returnType->nullable) {
+            throw Invalid::generatorReturnsChangeset(
+                $this->name,
+                $returnType,
             );
         }
     }

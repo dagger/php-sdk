@@ -459,7 +459,7 @@ type E2e {
   """
   The generated entrypoint answers calls from a local and from a Git source:
   constructor, state, enums, nested and empty lists, IDs, omitted values, a check,
-  and an error that keeps its message.
+  a generator, and an error that keeps its message.
   """
   pub generatedEntrypointCallCheck(ws: Workspace!): Void @check {
     assertCalls(generatedEntrypoint(ws).directory("/" + entrypointModulePath))
@@ -561,6 +561,7 @@ type E2e {
     assertContains(call(local, ["call", "nothing", "--json"]), "[]", "an empty list should stay a list")
     assertContains(call(local, ["call", "entries", "--dir", "./src"]), "EntrypointApp.php", "a Directory ID should load")
     local.withExec(["dagger", "-m", ".", "check", "self-check"], experimentalPrivilegedNesting: true).sync
+    assertContains(call(local, ["generate", "-l"]), "self-generate", "the generator should be listed")
 
     let failure = local
       .withExec(["dagger", "-m", ".", "call", "fail"], experimentalPrivilegedNesting: true, expect: ReturnType.FAILURE)

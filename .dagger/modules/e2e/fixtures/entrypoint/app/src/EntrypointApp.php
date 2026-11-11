@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace DaggerModule;
 
 use Dagger\Attribute;
+use Dagger\Changeset;
 use Dagger\Directory;
 use Dagger\Workspace;
 use RuntimeException;
+
+use function Dagger\dag;
 
 #[Attribute\DaggerObject]
 class EntrypointApp
@@ -88,5 +91,12 @@ class EntrypointApp
     #[Attribute\Check]
     public function selfCheck(Workspace $ws): void
     {
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Generate]
+    public function selfGenerate(): Changeset
+    {
+        return dag()->directory()->withNewFile('generated.txt', 'generated')->changes(dag()->directory());
     }
 }

@@ -27,4 +27,24 @@ final class Invalid extends \RuntimeException implements RegistrationError
             Checks must return Containers or void.
             TEXT);
     }
+
+    public static function generatorRequiresOnlyWorkspace(
+        string $methodName,
+        string $argName,
+    ): self {
+        return new self(<<<TEXT
+            '$methodName' is labeled as a generator, but requires '$argName'.
+            Generators may only require a Workspace; every other argument must be optional.
+            TEXT);
+    }
+
+    public static function generatorReturnsChangeset(
+        string $methodName,
+        string $returnType,
+    ): self {
+        return new self(<<<TEXT
+            '$methodName' is labeled as a generator, but returns '$returnType'.
+            Generators must return a non-null Changeset.
+            TEXT);
+    }
 }

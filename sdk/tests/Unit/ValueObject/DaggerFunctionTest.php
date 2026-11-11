@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Dagger\Tests\Unit\ValueObject;
 
 use Dagger\Attribute\DaggerObject;
+use Dagger\Changeset;
 use Dagger\Container;
 use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
@@ -14,6 +15,7 @@ use Dagger\Tests\Unit\Fixture\DaggerObjectWithDaggerFunctions;
 use Dagger\ValueObject\Argument;
 use Dagger\ValueObject\DaggerFunction;
 use Dagger\ValueObject\Type;
+use Dagger\Workspace;
 use Generator;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -37,6 +39,18 @@ class DaggerFunctionTest extends TestCase
         self::expectExceptionObject($expected);
 
         DaggerFunction::fromReflection($reflection);
+    }
+
+    #[Test]
+    public function itLetsAGeneratorRequireAWorkspace(): void
+    {
+        $method = (new ReflectionClass(new #[DaggerObject] class () {
+            #[\Dagger\Attribute\DaggerFunction]
+            #[\Dagger\Attribute\Generate]
+            public function generate(Workspace $workspace): Changeset {return new Changeset();}
+        }))->getMethod('generate');
+
+        self::assertTrue(DaggerFunction::fromReflection($method)->withGenerator);
     }
 
     #[Test]
@@ -107,6 +121,43 @@ class DaggerFunctionTest extends TestCase
                 public function lint(#[\Dagger\Attribute\ListOfType('string')] array $paths): void {}
             }))->getMethod('lint'),
             Invalid::checkTakesNoArgs('lint', 'paths'),
+        ];
+
+        yield 'generator that requires an argument' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Generate]
+                public function generate(string $name): Changeset {return new Changeset();}
+            }))->getMethod('generate'),
+            Invalid::generatorRequiresOnlyWorkspace('generate', 'name'),
+        ];
+
+        yield 'generator that may return null' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Generate]
+                public function generate(): ?Changeset {return null;}
+            }))->getMethod('generate'),
+            Invalid::generatorReturnsChangeset('generate', Changeset::class),
+        ];
+
+        yield 'generator that requires a list' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Generate]
+                public function generate(#[\Dagger\Attribute\ListOfType('string')] array $names): Changeset {return new Changeset();}
+            }))->getMethod('generate'),
+            Invalid::generatorRequiresOnlyWorkspace('generate', 'names'),
+        ];
+
+        yield 'generator that returns a list' => [
+            (new ReflectionClass(new #[DaggerObject] class () {
+                #[\Dagger\Attribute\DaggerFunction]
+                #[\Dagger\Attribute\Generate]
+                #[\Dagger\Attribute\ReturnsListOfType('string')]
+                public function generate(): array {return [];}
+            }))->getMethod('generate'),
+            Invalid::generatorReturnsChangeset('generate', 'array'),
         ];
     }
 
