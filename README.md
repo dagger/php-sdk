@@ -159,13 +159,18 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 - `disableDefaultFunctionCaching = true` or a `[[clients]]` table
 - an `engineVersion` later than `v1.0.0-beta.27`
 - a `source` other than the module directory
-- no `composer.json`, or one without the `./sdk` path repository
+- a `composer.json` without the `./sdk` path repository
 - a Composer path or autoload path outside the module
 - a Composer `vendor-dir` other than `vendor`
 - a runtime other than `php`
 
 To move such a module, remove what keeps it there and run `dagger generate`. A
 custom entrypoint stays as it is.
+
+A module without `composer.json` also moves to the entrypoint. Generation first
+adds the starter template's files that the module does not have, as the engine's
+PHP runtime does. The `template` setting selects the template. A new module in a
+directory that already has a `composer.json` keeps it and gets no starter files.
 
 A module already on the generated entrypoint that gains a Composer path outside the
 module, or include rules, fails to generate. A generated entrypoint with
