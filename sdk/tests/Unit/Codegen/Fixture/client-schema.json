@@ -18,6 +18,7 @@
           },
           {
             "name": "myLinter",
+            "args": [{"name": "client", "type": {"kind": "SCALAR", "name": "String"}}],
             "type": {"kind": "NON_NULL", "ofType": {"kind": "OBJECT", "name": "MyLinter"}},
             "directives": [{"name": "sourceMap", "args": [{"name": "module", "value": "\"my-linter\""}]}]
           }

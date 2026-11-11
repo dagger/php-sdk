@@ -2,6 +2,7 @@
 
 namespace Dagger\Command;
 
+use Dagger\Client\ModuleTarget;
 use Dagger\Codegen\Codegen;
 use Dagger\Codegen\Introspection\IntrospectionSchema;
 use Dagger\Codegen\SchemaGenerator;
@@ -55,6 +56,18 @@ class CodegenCommand extends Command
             InputOption::VALUE_REQUIRED,
             'Generate the types and fields the module contributes, into generated/Clients',
         );
+        $this->addOption(
+            'address',
+            null,
+            InputOption::VALUE_REQUIRED,
+            'The address the client serves its module from, with --client',
+        );
+        $this->addOption(
+            'pin',
+            null,
+            InputOption::VALUE_REQUIRED,
+            'The commit a Git address is pinned to, with --client',
+        );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -64,6 +77,11 @@ class CodegenCommand extends Command
         if ($input->getOption('core') && $module !== null) {
             throw new InvalidArgumentException('--core and --client exclude each other');
         }
+        $address = $input->getOption('address');
+        if (($module === null) !== ($address === null) || ($module === null && $input->getOption('pin') !== null)) {
+            throw new InvalidArgumentException('--client needs --address, and --address and --pin need --client');
+        }
+        $target = $address === null ? null : new ModuleTarget($address, $input->getOption('pin'));
 
         if ($input->getOption('schema-file') !== null && file_exists($input->getOption('schema-file'))) {
             $fileContents = file_get_contents($input->getOption('schema-file'));
@@ -74,7 +92,7 @@ class CodegenCommand extends Command
             $schema = (new SchemaGenerator($client))->getSchema();
         }
 
-        $codegen = new Codegen($schema, self::WRITE_DIR, $io, $module);
+        $codegen = new Codegen($schema, self::WRITE_DIR, $io, $module, $target);
         $codegen->generate();
 
         return Command::SUCCESS;

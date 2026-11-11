@@ -10,6 +10,7 @@ use Dagger\Client\AbstractInputObject;
 use Dagger\Client\AbstractObject;
 use Dagger\Client\AbstractScalar;
 use Dagger\Client\IdAble;
+use Dagger\Client\ModuleTarget;
 use Dagger\Codegen\CodeWriter;
 use Nette\PhpGenerator\ClassType;
 use Nette\PhpGenerator\EnumType;
@@ -32,6 +33,7 @@ class NewCodegenVisitor extends CodeWriter
         private readonly array $interfaceNames = [],
         string $namespace = CodeWriter::NAMESPACE,
         private readonly array $classNamespaces = [],
+        private readonly ?ModuleTarget $target = null,
     ) {
         parent::__construct($targetDirectory, $namespace);
     }
@@ -106,6 +108,10 @@ class NewCodegenVisitor extends CodeWriter
 
     public function visitObject(IntrospectionType $type): void
     {
+        if ($type->name === 'Query' && $this->target !== null) {
+            $this->visitEntry($type);
+            return;
+        }
         $parentClass = $type->name === 'Query' ? AbstractClient::class : AbstractObject::class;
         $className = $type->name === 'Query' ? 'Client' : $type->name;
 
@@ -137,6 +143,37 @@ class NewCodegenVisitor extends CodeWriter
         }
 
         $this->write($objectClass);
+    }
+
+    /**
+     * The client's entry: a static method per Query field the target contributes,
+     * each serving the target in the shared session before it starts its query.
+     */
+    private function visitEntry(IntrospectionType $type): void
+    {
+        $entryClass = new ClassType('Client');
+        $entryClass->setFinal();
+        foreach ($type->fields as $field) {
+            $field->parentTypeName = $type->name;
+            $this->generateObjectMethod($entryClass, $field, $type);
+            $method = $entryClass->getMethod($field->name)->setStatic();
+            // A static method has no $this: the shared client and an empty chain stand in for the
+            // root's protected members. A target only adds its constructor to Query, whose body
+            // reads nothing else. GraphQL reserves the __ prefix, so no argument is $__client.
+            $rootBody = strtr($method->getBody(), [
+                '$this->client' => '$__client',
+                '$this->queryBuilderChain' => '(new \Dagger\GraphQl\QueryBuilderChain())',
+            ]);
+            $method->setBody('');
+            $method->addBody('$__client = \Dagger\Dagger::getClientInstance();');
+            $method->addBody(
+                '$__client->serve(new \Dagger\Client\ModuleTarget(?, ?));',
+                [$this->target->address, $this->target->pin],
+            );
+            $method->addBody($rootBody);
+        }
+
+        $this->write($entryClass);
     }
 
     public function visitInterface(IntrospectionType $type): void
