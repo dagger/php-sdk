@@ -30,9 +30,9 @@ type PhpSdk {
 
   """
   Find the PHP client root containing the workspace cwd: the directory of the
-  nearest composer.json, relative to the workspace root. A module's vendored
-  SDK carries its own composer.json under sdk/, so the module owning it answers
-  instead. Null when there is none.
+  nearest composer.json, relative to the workspace root. A module's or a PHP
+  program's vendored SDK carries its own composer.json under sdk/, so the
+  module or program owning it answers instead. Null when there is none.
   """
   pub findClientRoot(ws: Workspace!): String {
     let found = ws.findUp("composer.json")
@@ -41,7 +41,8 @@ type PhpSdk {
     } else {
       let root = normalizePath(found.trimSuffix("composer.json"))
       let vendorParent = if (root == "sdk") { "." } else { root.trimSuffix("/sdk") }
-      if (vendorParent != root and hasModuleConfig(ws, vendorParent)) {
+      let ownedByProgram = hasFile(ws, vendorParent, "composer.json") and modAt(vendorParent, ws, "").ownsSdk
+      if (vendorParent != root and (hasModuleConfig(ws, vendorParent) or ownedByProgram)) {
         vendorParent
       } else {
         root
@@ -54,16 +55,20 @@ type PhpSdk {
   module. A scope without a module config is given a dagger-module.toml. A
   self-contained module then moves to the entrypoint this SDK generates, seeded
   from the `template` setting when it has no composer.json; see
-  Mod.usesEntrypoint. The module's clients are generated into its sdk/; a scope
-  without a module cannot have clients yet.
+  Mod.usesEntrypoint. The module's clients are generated into its sdk/. A scope
+  without a module is a PHP program: its clients are generated the same way, and
+  an sdk/ this SDK wrote is regenerated once they are all removed.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
     checkEngine
     if (isModule == false) {
-      if (clients.length > 0) {
-        raise "php-sdk does not generate module clients in a scope without a module yet: remove the clients " + clientNames(clients)
-      }
-      ws
+      let scope = normalizePath(ws.cwd)
+      let subject = "the PHP program at " + scope
+      let target = targetRelease(subject)
+      checkClientReleases(subject, target, clients)
+      # The core schema is read through a Dang manifest, which needs a name.
+      let manifestName = if (name == "") { "php-program" } else { name }
+      modAt(scope, ws, manifestName, target, clients: clients).programGenerated.withWorkdir(scope)
     } else {
       let scope = normalizePath(ws.cwd)
       # Mod.rootPath is workspace-root-relative, so the scope is generated from
@@ -161,9 +166,7 @@ type PhpSdk {
   A pin or a client on a module that keeps the PHP runtime is refused: the engine
   regenerates that module for its manifest's engineVersion, without clients. A
   client module that declares a release on the other side of the identifier-casing
-  cut at v1.0.0-beta.26 from that release is refused too. The engine names a client
-  module by the rules of the release it declares. Its client is generated in the
-  view of the release this module generates for.
+  cut from that release is refused too; see checkClientReleases.
   """
   let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion, clients: [ModuleSource!] = null): Mod! {
     let target = targetRelease(subject, setting)
@@ -175,7 +178,18 @@ type PhpSdk {
     if (given.length > 0 and mod.skipGenerate == false and mod.usesEntrypoint == false) {
       raise subject + " keeps the PHP runtime, whose sdk/ the engine generates without clients: move the module to the generated entrypoint, or remove the clients " + clientNames(given)
     }
-    given.each { client =>
+    checkClientReleases(subject, target, given)
+    mod
+  }
+
+  """
+  Refuses a client module that declares a release on the other side of the
+  identifier-casing cut at v1.0.0-beta.26 from target, the release its client is
+  generated for. The engine names a client module by the rules of the release it
+  declares, whatever the view of the session that serves it.
+  """
+  let checkClientReleases(subject: String!, target: String!, clients: [ModuleSource!]!): Void {
+    clients.each { client =>
       let cut = "v1.0.0-beta.26"
       let declared = client.engineVersion
       if (declared.containsMatch(Regexp(releasePattern)) and releasePrecedes(declared, cut) != releasePrecedes(target, cut)) {
@@ -183,7 +197,7 @@ type PhpSdk {
       }
       null
     }
-    mod
+    null
   }
 
   let clientNames(clients: [ModuleSource!]!): String! {
@@ -272,6 +286,11 @@ type PhpSdk {
       .map { filename => if (dir == ".") { filename } else { dir + "/" + filename } }
       .filter { path => ws.directory("/", include: [path]).exists(path) }
     paths[0] ?? ""
+  }
+
+  let hasFile(ws: Workspace!, dir: String!, filename: String!): Boolean! {
+    let path = if (dir == ".") { filename } else { dir + "/" + filename }
+    ws.directory("/", include: [path]).exists(path)
   }
 
   let normalizePath(path: String!): String! {

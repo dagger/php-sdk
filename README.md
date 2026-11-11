@@ -8,8 +8,8 @@ modules like this one. The engine drives the SDK: it records a module scope in
 the scope through `findClientRoot` and `generateScope`. This module writes the
 template files, the module's `dagger-module.toml` and the generated SDK files;
 the engine owns the workspace bookkeeping. Dependencies between modules are
-module clients, which this SDK generates into a module's `sdk/`; see
-[Module clients](#module-clients).
+module clients, which this SDK generates into the `sdk/` of a module or a PHP
+program; see [Module clients](#module-clients).
 
 The PHP library and codegen live under [`sdk/`](./sdk), vendored from
 dagger/dagger; [`sdk/VENDOR.md`](./sdk/VENDOR.md) records the commit. Generation
@@ -295,18 +295,33 @@ objects such as a `Dagger\Directory` pass into its calls. A Git client is bound 
 its address and to the commit the engine resolved it to; the checks here run
 local clients only. Commit `sdk/` with its clients.
 
+A scope without a module is a PHP program, such as a Composer project that calls
+Dagger. Its clients generate the same way, against the same core schema as a
+module's, without workspace fields such as `currentWorkspace`. Generation also adds
+the path repository `./sdk` and the requirement `dagger/dagger: *@dev` to its
+`composer.json` with Composer's own commands, which keep the other keys but may
+reformat the file, then updates `composer.lock`. When the last client is removed,
+generation keeps the Composer wiring and regenerates `sdk/` without clients. A
+program with no clients and no `sdk/` from this SDK is left unchanged. A program
+loads a local client's module by its path from the root of the workspace it runs
+in. Commit `sdk/`, `composer.json` and `composer.lock`.
+
 Generation fails, and applies none of its changes, in these cases:
 
 - The module keeps the PHP runtime; see [Generated entrypoint](#generated-entrypoint).
-- The scope has no module.
+- A scope without a module and without `composer.json` is given clients.
+- A program's `composer.json` names another repository `dagger-sdk`, which
+  generation would replace with `./sdk`.
+- A program's Composer repositories install `dagger/dagger` from somewhere other
+  than `./sdk`, such as an earlier repository or a filter on `./sdk`.
 - A client is the module itself, by its path. A module of a workspace opened from
   Git can arrive as a Git client, which this check does not catch.
 - Two clients have the same name once case and separators are ignored, such as
   `file-lister` and `FileLister`.
 - A client module declares a release on the other side of the identifier-casing
   cut at `v1.0.0-beta.26` from the module's target. The engine names the client
-  module by the rules of the release it declares. Its client uses the names of the
-  module's target.
+  module by the rules of the release it declares, whatever the API view of the
+  session that calls it. Its client uses the names of the module's target.
 - A module function takes or returns a client's type. The message is in the
   generation's log; the error itself carries only the exit code.
 - A client module adds a field to a core type other than `Query`.
