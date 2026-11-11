@@ -11,7 +11,7 @@ type E2e {
   let rootingModulePath: String! = fixtureRoot + "/rooting/app"
   let entrypointModulePath: String! = fixtureRoot + "/entrypoint/app"
   let entrypointName: String! = "entrypoint-app"
-  let target: String! = "v1.0.0-beta.25"
+  let target: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
 
   let assert(condition: Boolean!, message: String!): Void {
@@ -143,8 +143,8 @@ type E2e {
     assertNotContains(manifest, "[runtime]", "a new module should not keep the php runtime")
     assertContains(
       generated.file("sdk/entrypoint/dang.toml").contents,
-      "dagger = \"v1.0.0-beta.25\"",
-      "the entrypoint should declare v1.0.0-beta.25, before the identifier-casing cut",
+      "dagger = \"v1.0.0-beta.27\"",
+      "the entrypoint should declare v1.0.0-beta.27, past the identifier-casing cut",
     )
     let portedNaming = generated.file("sdk/src/Module/EngineNaming.php").contents
     assertContains(portedNaming, "Copyright (c) 2018 Ma_124", "the generated SDK should keep the strcase copyright")
@@ -485,8 +485,8 @@ type E2e {
       )
     }
     assert(generatedEntrypoint(generated, sdk).changes(generated).isEmpty, "a second pinned generation changed the module")
-    let later = phpSdk(targetVersion: "v1.0.0-beta.26")
-    let refusal = "pins targetVersion v1.0.0-beta.26, which this release of the PHP SDK cannot generate for"
+    let later = phpSdk(targetVersion: "v1.0.0-beta.28")
+    let refusal = "pins targetVersion v1.0.0-beta.28, which this release of the PHP SDK cannot generate for"
     assertContains(generationError(ws, later), refusal, "a later release should be refused")
     let directRefused = later.mod(ws, path: entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
     assertContains(directRefused, refusal, "a later release should be refused on a direct mod")

@@ -1,8 +1,8 @@
 # Vendored PHP library
 
 `src/`, `scripts/`, `tests/`, `composer.json`, `composer.lock`, `LICENSE` and
-`phpunit.xml.dist` come from `sdk/php` in dagger/dagger at `v1.0.0-beta.25`,
-commit `a45241b20a5e07fbfc5954479ef0b61da843499c`.
+`phpunit.xml.dist` come from `sdk/php` in dagger/dagger at `v1.0.0-beta.27`,
+commit `400b82d6f3c09ef096d2f59b3e920267b5969bf4`.
 
 Local changes to the vendored files:
 
