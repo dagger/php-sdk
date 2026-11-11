@@ -24,6 +24,16 @@ type Mod {
   let targetEngineVersion: String!
 
   """
+  Whether the manifest declares an engineVersion later than the release this SDK
+  generates for. Such a module is not migrated: migration would silently drop a
+  version that this SDK cannot generate for. A module already on the generated entrypoint
+  is not refused: the engine takes its version from dang.toml and ignores the
+  manifest's engineVersion (dagger/dagger v1.0.0-beta.27,
+  resolveModuleSourceVersions).
+  """
+  let declaresLaterEngine: Boolean!
+
+  """
   The module name the caller knows, empty to read it from the manifest.
   """
   let givenName: String!
@@ -112,7 +122,7 @@ type Mod {
     } else if (runtimeSource != "php") {
       false
     } else {
-      declares("dependencies") == false and entrypointBlockers.length == 0
+      declares("dependencies") == false and declaresLaterEngine == false and entrypointBlockers.length == 0
     }
   }
 
