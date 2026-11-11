@@ -274,7 +274,15 @@ final readonly class DangEntrypointRenderer
           .withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")
           .withExec(["php", "sdk/bin/dagger-module", "call", "--output", "/dagger/result.json"], stdin: request, experimentalPrivilegedNesting: true)
           .file("/dagger/result.json")
-          .contents
+          .contents rescue {
+            # From v1.0.0-beta.27 an exec error's message carries only the exit code.
+            # Its extensions hold the stderr, capped by the engine at 100 KiB.
+            err: GraphQLError => {
+              let stderr = (JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? ""
+              if (stderr == "") { raise err }
+              raise stderr
+            }
+          }
         (result :: JSON!)
       }
 

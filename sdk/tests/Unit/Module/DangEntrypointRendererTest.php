@@ -229,7 +229,12 @@ class DangEntrypointRendererTest extends TestCase
         self::assertStringContainsString('.withEnvVariable("DAGGER_CLIENT_VERSION", "v1.0.0-beta.21")', $main);
         self::assertStringContainsString('.withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")', $main);
         self::assertStringContainsString('"sdk/bin/dagger-module", "call"', $main);
-        self::assertStringContainsString('experimentalPrivilegedNesting: true', $main);
+        self::assertStringContainsString('experimentalPrivilegedNesting: true)', $main);
+        self::assertStringContainsString('.file("/dagger/result.json")', $main);
+        self::assertStringContainsString('.contents rescue {', $main);
+        self::assertStringContainsString('err: GraphQLError =>', $main);
+        self::assertStringContainsString('{ raise err }', $main);
+        self::assertStringContainsString('raise stderr', $main);
         self::assertStringContainsString('PhpModuleBuild(source: currentModule.source).installed', $main);
     }
 
