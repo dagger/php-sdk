@@ -54,15 +54,15 @@ type PhpSdk {
   module. A scope without a module config is given a dagger-module.toml. A
   self-contained module then moves to the entrypoint this SDK generates, seeded
   from the `template` setting when it has no composer.json; see
-  Mod.usesEntrypoint. Module clients are not generated yet.
+  Mod.usesEntrypoint. The module's clients are generated into its sdk/; a scope
+  without a module cannot have clients yet.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
     checkEngine
-    if (clients.length > 0) {
-      raise "php-sdk does not generate module clients yet"
-    }
-
     if (isModule == false) {
+      if (clients.length > 0) {
+        raise "php-sdk does not generate module clients in a scope without a module yet: remove the clients " + clientNames(clients)
+      }
       ws
     } else {
       let scope = normalizePath(ws.cwd)
@@ -80,7 +80,7 @@ type PhpSdk {
           .generate(rooted.withWorkdir(scope), legacyJson: false)
           .withWorkdir(".")
       }
-      targetedMod(scope, initialized, name, "module \"" + name + "\"").generated.withWorkdir(scope)
+      targetedMod(scope, initialized, name, "module \"" + name + "\"", clients: clients).generated.withWorkdir(scope)
     }
   }
 
@@ -126,7 +126,7 @@ type PhpSdk {
     null
   }
 
-  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion, laterEngine: Boolean! = false): Mod! {
+  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion, laterEngine: Boolean! = false, clients: [ModuleSource!] = null): Mod! {
     Mod(
       rootPath: path,
       ws: ws,
@@ -135,6 +135,7 @@ type PhpSdk {
       givenName: name,
       templateName: selectedTemplate,
       declaresLaterEngine: laterEngine,
+      clients: clients,
     )
   }
 
@@ -157,16 +158,36 @@ type PhpSdk {
 
   """
   The module at path, generating for the release a targetVersion setting names.
-  A pin on a module that keeps the PHP runtime is refused: the engine
-  regenerates that module for its manifest's engineVersion.
+  A pin or a client on a module that keeps the PHP runtime is refused: the engine
+  regenerates that module for its manifest's engineVersion, without clients. A
+  client module that declares a release on the other side of the identifier-casing
+  cut at v1.0.0-beta.26 from that release is refused too. The engine names a client
+  module by the rules of the release it declares. Its client is generated in the
+  view of the release this module generates for.
   """
-  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion): Mod! {
+  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion, clients: [ModuleSource!] = null): Mod! {
     let target = targetRelease(subject, setting)
-    let mod = modAt(path, ws, name, target, declaresLaterEngine(ws, path))
+    let mod = modAt(path, ws, name, target, declaresLaterEngine(ws, path), clients)
+    let given = clients ?? ([] :: [ModuleSource!]!)
     if (setting != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
       raise subject + " pins targetVersion " + target + ", which applies to the generated entrypoint only: this module keeps the PHP runtime, which generates for the engineVersion of its manifest. Remove targetVersion from the scope's settings in dagger.toml"
     }
+    if (given.length > 0 and mod.skipGenerate == false and mod.usesEntrypoint == false) {
+      raise subject + " keeps the PHP runtime, whose sdk/ the engine generates without clients: move the module to the generated entrypoint, or remove the clients " + clientNames(given)
+    }
+    given.each { client =>
+      let cut = "v1.0.0-beta.26"
+      let declared = client.engineVersion
+      if (declared.containsMatch(Regexp(releasePattern)) and releasePrecedes(declared, cut) != releasePrecedes(target, cut)) {
+        raise subject + " generates for " + target + " and has the client " + client.moduleName + ", which declares " + declared + ", across the identifier-casing cut at " + cut + ": the engine names the client module by the rules of " + declared + ", and its client would use the names of " + target + ". Have the client module declare a release on the same side of the cut as " + target + ", or remove the client"
+      }
+      null
+    }
     mod
+  }
+
+  let clientNames(clients: [ModuleSource!]!): String! {
+    clients.map { client => client.moduleName }.join(", ")
   }
 
   """

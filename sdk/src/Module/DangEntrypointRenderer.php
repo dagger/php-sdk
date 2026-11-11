@@ -221,6 +221,15 @@ final readonly class DangEntrypointRenderer
             return "$base.withListOf(" . self::type($type->subtype) . ')';
         }
 
+        // The entrypoint declares no dependencies, so the engine would not know a client's types.
+        if (preg_match('#^\\\\?Dagger\\\\Clients\\\\([^\\\\]+)\\\\#', $type->name, $client) === 1) {
+            throw new RuntimeException(sprintf(
+                'The type %s comes from the module client %s, and a module function cannot take or return a client type yet',
+                $type->name,
+                $client[1],
+            ));
+        }
+
         return match ($type->typeDefKind) {
             TypeDefKind::BOOLEAN_KIND,
             TypeDefKind::FLOAT_KIND,

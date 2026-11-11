@@ -8,7 +8,7 @@ modules like this one. The engine drives the SDK: it records a module scope in
 the scope through `findClientRoot` and `generateScope`. This module writes the
 template files, the module's `dagger-module.toml` and the generated SDK files;
 the engine owns the workspace bookkeeping. Dependencies between modules are
-module clients, which this SDK does not generate yet; see
+module clients, which this SDK generates into a module's `sdk/`; see
 [Module clients](#module-clients).
 
 The PHP library and codegen live under [`sdk/`](./sdk), vendored from
@@ -273,8 +273,46 @@ recorded in `dagger.toml` under `[sdks.php.scopes."<path>"]`.
 
 ## Module clients
 
-Generated module clients are not supported yet. `dagger module client add` in a
-PHP scope fails and leaves the workspace unchanged. A module's existing
+The engine's `dagger module client add`, `dagger module client rm` and
+`dagger generate` commands record a module's clients in its scope in
+`dagger.toml` and regenerate the module with them. A local client's path is
+relative to the directory that holds `dagger.toml`.
+
+Each client generates into `sdk/generated/Clients/<Name>/`, in namespace
+`Dagger\Clients\<Name>`, where `<Name>` is the client module's name in PascalCase.
+`sdk/composer.json` already autoloads it, so the module's `composer.json` does not
+change. A call starts from a static method of the class `Client`, named after the
+client module:
+
+```php
+use Dagger\Clients\Lister\Client as Lister;
+
+$report = Lister::lister()->lint($source);
+```
+
+A client shares the session of `Dagger\Dagger::getClientInstance()`, so core
+objects such as a `Dagger\Directory` pass into its calls. A Git client is bound to
+its address and to the commit the engine resolved it to; the checks here run
+local clients only. Commit `sdk/` with its clients.
+
+Generation fails, and applies none of its changes, in these cases:
+
+- The module keeps the PHP runtime; see [Generated entrypoint](#generated-entrypoint).
+- The scope has no module.
+- A client is the module itself, by its path. A module of a workspace opened from
+  Git can arrive as a Git client, which this check does not catch.
+- Two clients have the same name once case and separators are ignored, such as
+  `file-lister` and `FileLister`.
+- A client module declares a release on the other side of the identifier-casing
+  cut at `v1.0.0-beta.26` from the module's target. The engine names the client
+  module by the rules of the release it declares. Its client uses the names of the
+  module's target.
+- A module function takes or returns a client's type. The message is in the
+  generation's log; the error itself carries only the exit code.
+- A client module adds a field to a core type other than `Query`.
+
+`dagger call php-sdk mod ... generate` does not know a module's clients, and
+refuses a module that has some: run `dagger generate`. A module's existing
 dependencies are kept as they are.
 
 ## Migrate a workspace

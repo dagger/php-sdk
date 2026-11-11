@@ -12,6 +12,8 @@ type E2e {
   let entrypointModulePath: String! = fixtureRoot + "/entrypoint/app"
   let entrypointName: String! = "entrypoint-app"
   let clientTargetPath: String! = fixtureRoot + "/client-target/app"
+  let clientMakerPath: String! = fixtureRoot + "/client-target/maker"
+  let clientCallerPath: String! = fixtureRoot + "/client-target/caller"
   let target: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
 
@@ -47,8 +49,8 @@ type E2e {
   """
   The fixture module generated from a workspace, at the workspace root.
   """
-  let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk): Workspace! {
-    sdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: []).withWorkdir(".")
+  let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = []): Workspace! {
+    sdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: clients).withWorkdir(".")
   }
 
   let usesEntrypoint(ws: Workspace!): Boolean! {
@@ -58,8 +60,8 @@ type E2e {
   """
   The message generation fails with, or an empty string when it does not fail.
   """
-  let generationError(ws: Workspace!, sdk: PhpSdk! = phpSdk): String! {
-    let cwd = generatedEntrypoint(ws, sdk).cwd rescue {
+  let generationError(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = []): String! {
+    let cwd = generatedEntrypoint(ws, sdk, clients).cwd rescue {
       err: Error => "failed: " + err.message
     }
     if (cwd.hasPrefix("failed: ")) { cwd.trimPrefix("failed: ") } else { "" }
@@ -189,10 +191,17 @@ type E2e {
   }
 
   """
-  A scope without a module and without clients is left unchanged.
+  A scope without a module and without clients is left unchanged. A module's
+  clients generate into sdk/generated/Clients, a second generation changes
+  nothing, and a removed client's files go. A refused generation returns no
+  workspace, so it changes nothing. A direct generation, which does not know the
+  clients, refuses a module that has some. The client type in a function
+  signature is refused by the entrypoint describer, which the unit tests cover.
   """
   pub generateClientScopeCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
+    # A workspace opened from Git, as on CI, would make these fixtures Git clients.
+    let local = root.asWorkspace
     let generated = phpSdk.generateScope(
       root.asWorkspace(cwd: layeringModulePath),
       isModule: false,
@@ -202,7 +211,69 @@ type E2e {
 
     assert(cwdOf(generated) == layeringModulePath, "generateScope changed the workspace cwd")
     assert(generated.directory("/").changes(root).isEmpty, "a scope without a module or clients should not change")
+
+    let lister = local.moduleSource("/" + clientTargetPath)
+    let maker = local.moduleSource("/" + clientMakerPath)
+    let clientsDir = entrypointModulePath + "/sdk/generated/Clients"
+    let both = generatedEntrypoint(local, clients: [lister, maker])
+    let entry = contentsOf(both, clientsDir + "/FileLister/Client.php")
+    assertContains(entry, "namespace Dagger\\Clients\\FileLister;", "a client should generate into its namespace")
+    assertContains(entry, "function fileLister(", "the entry class should have the target's constructor")
+    assertContains(entry, "ModuleTarget('/" + clientTargetPath + "', null)", "a local client should serve its module from the workspace root, without a pin")
+    assert(exists(both, clientsDir + "/FileLister/FileLister.php"), "the client's type should be generated")
+    assert(exists(both, clientsDir + "/FileMaker/Client.php"), "every client should be generated")
+    assert(exists(both, entrypointModulePath + "/sdk/generated/Client.php"), "core should still be generated")
+    assert(exists(both, entrypointModulePath + "/sdk/generated/FileLister.php") == false, "core should not hold a client's types")
+    assert(generatedEntrypoint(both, clients: [lister, maker]).changes(both).isEmpty, "a second generation with clients changed the module")
+    let fewer = generatedEntrypoint(both, clients: [lister])
+    assert(exists(fewer, clientsDir + "/FileMaker") == false, "a removed client's files should go")
+    assert(exists(fewer, clientsDir + "/FileLister/Client.php"), "the remaining client should stay")
+    assert(exists(generatedEntrypoint(both), clientsDir) == false, "removing every client should remove generated/Clients")
+    let direct = phpSdk.mod(both, path: entrypointModulePath, findUp: false).generated.cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(direct, "has module clients, which only its scope in dagger.toml lists: run dagger generate", "a direct generation should not drop the clients")
+
+    let plain = phpSdk.generateScope(root.asWorkspace(cwd: layeringModulePath), isModule: false, name: "layering", clients: [lister]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(plain, "in a scope without a module yet: remove the clients file-lister", "a client in a scope without a module should be refused")
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let runtime = generationError(local.withNewFile("/" + manifest, "include = [\"src\"]\n" + contentsOf(local, manifest)), clients: [lister])
+    assertContains(runtime, "keeps the PHP runtime, whose sdk/ the engine generates without clients: move the module to the generated entrypoint, or remove the clients file-lister", "a client of a module that keeps the runtime should be refused")
+    let onTarget = local.withNewFile("/" + manifest, contentsOf(local, manifest).replace("v1.0.0-beta.21", target))
+    let itself = generationError(onTarget, clients: [lister, onTarget.moduleSource("/" + entrypointModulePath)])
+    assertContains(itself, "declares itself as the client entrypoint-app", "a client of the scope's own module should be refused")
+    let renamed = local
+      .withNewFile("/" + clientTargetPath + "/dagger-module.toml", "name = \"FileLister\"\nengineVersion = \"v1.0.0-beta.27\"\n\n[runtime]\n  source = \"dang\"\n")
+      .moduleSource("/" + clientTargetPath)
+    assertContains(generationError(local, clients: [lister, renamed]), "has the clients file-lister and FileLister, which generate into one PHP namespace", "clients whose namespaces differ only in case should be refused")
+    let acrossCut = local
+      .withNewFile("/" + clientMakerPath + "/dagger-module.toml", "name = \"file-maker\"\nengineVersion = \"v1.0.0-beta.25\"\n\n[runtime]\n  source = \"dang\"\n")
+      .moduleSource("/" + clientMakerPath)
+    assertContains(generationError(local, clients: [acrossCut]), "generates for " + target + " and has the client file-maker, which declares v1.0.0-beta.25, across the identifier-casing cut at v1.0.0-beta.26", "a client module on the other side of the identifier-casing cut from the target should be refused")
     null
+  }
+
+  """
+  A module calls two clients through dagger call, from its own code: a core
+  Directory that one client returns reaches the other.
+  """
+  pub unifiedClientCallCheck(ws: Workspace!): Void @check {
+    let tree = directory
+      .withDirectory("caller", ws.directory("/" + clientCallerPath))
+      .withDirectory("lister", ws.directory("/" + clientTargetPath))
+      .withDirectory("maker", ws.directory("/" + clientMakerPath))
+    let scope = tree.asWorkspace(cwd: "caller")
+    let lister = scope.moduleSource("/lister")
+    let generated = phpSdk.generateScope(scope, isModule: true, name: "caller", clients: [lister, scope.moduleSource("/maker")])
+    let app = callClient
+      .withDirectory("/work", generated.directory("/"))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/caller")
+    let listed = call(app, ["call", "list-made"])
+    assert(listed.trimSpace == "a.html,b.html", "the module should list what one client made with the other: " + listed)
   }
 
   """
