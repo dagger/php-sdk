@@ -19,6 +19,9 @@ abstract class AbstractClient
     protected AbstractClient $client;
     protected GqlClient $graphQlClient;
 
+    /** @var array<string, true> */
+    private array $servedTargets = [];
+
     public function __construct(
         Connection|Client $clientOrConnection,
         protected readonly QueryBuilderChain $queryBuilderChain = new QueryBuilderChain()
@@ -53,6 +56,25 @@ abstract class AbstractClient
         }
 
         return null;
+    }
+
+    /**
+     * Serve the target's module in this client's session, once. A failed serve
+     * is not recorded, so the next call tries again.
+     */
+    public function serve(ModuleTarget $target): void
+    {
+        $key = json_encode([$target->address, $target->pin]);
+        if (isset($this->servedTargets[$key])) {
+            return;
+        }
+        $serveModule = new \Dagger\Client\QueryBuilder('serveModule');
+        $serveModule->setArgument('address', $target->address);
+        if ($target->pin !== null) {
+            $serveModule->setArgument('refPin', $target->pin);
+        }
+        $this->queryLeaf($serveModule, 'serveModule');
+        $this->servedTargets[$key] = true;
     }
 
     /**

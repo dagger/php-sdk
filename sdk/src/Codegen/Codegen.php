@@ -2,6 +2,7 @@
 
 namespace Dagger\Codegen;
 
+use Dagger\Client\ModuleTarget;
 use Dagger\Codegen\Introspection\IntrospectionDirective;
 use Dagger\Codegen\Introspection\IntrospectionField;
 use Dagger\Codegen\Introspection\IntrospectionSchema;
@@ -30,6 +31,7 @@ class Codegen
         private readonly string $writeDir,
         private readonly SymfonyStyle $io,
         private readonly ?string $module = null,
+        private readonly ?ModuleTarget $target = null,
     ) {
     }
 
@@ -49,6 +51,7 @@ class Codegen
             $interfaceNames,
             $namespace,
             $this->classNamespaces(),
+            $this->target,
         );
 
         // Scalars (custom, not Void, not DateTime, not ID)

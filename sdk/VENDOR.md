@@ -17,6 +17,11 @@ Local changes to the vendored files:
   no module contributes. `--client <module>` generates what the module contributes into
   `generated/Clients/<Name>/`, in namespace `Dagger\Clients\<Name>`, and records the
   module in that directory's `.client-module`.
+- `src/Client/AbstractClient.php` gains `serve`, which sends `serveModule` once per
+  target. `src/Codegen/Introspection/NewCodegenVisitor.php`, `src/Codegen/Codegen.php`
+  and `src/Command/CodegenCommand.php` generate a client's `Query` fields as static
+  methods of `Dagger\Clients\<Name>\Client`, which serve the target given by
+  `--address` and `--pin` on the shared `Dagger::getClientInstance()`.
 - `tests/Unit/Service/Serialisation/SerialiserTest.php` uses `Id`. `ContainerId`
   exists upstream only as a stale committed class, which a regenerated client lacks.
 - `src/ValueObject/DaggerFunction.php` accepts a check with a required
@@ -27,8 +32,8 @@ Local changes to the vendored files:
 
 Files this repository adds, which have no counterpart in dagger/dagger:
 
-- `src/Module/`, `bin/dagger-module`, `tests/Unit/Module/`, `tests/Unit/Codegen/CodegenTest.php`,
-  `tests/Unit/Codegen/Fixture/` and this file.
+- `src/Module/`, `src/Client/ModuleTarget.php`, `bin/dagger-module`, `tests/Unit/Module/`,
+  `tests/Unit/Codegen/CodegenTest.php`, `tests/Unit/Codegen/Fixture/` and this file.
 
 `.gitignore` replaces the upstream one: it ignores `vendor/`, `generated/` and `.cache/`,
 not the upstream tree's tooling files.

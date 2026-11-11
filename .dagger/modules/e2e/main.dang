@@ -11,6 +11,7 @@ type E2e {
   let rootingModulePath: String! = fixtureRoot + "/rooting/app"
   let entrypointModulePath: String! = fixtureRoot + "/entrypoint/app"
   let entrypointName: String! = "entrypoint-app"
+  let clientTargetPath: String! = fixtureRoot + "/client-target/app"
   let target: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
 
@@ -590,7 +591,21 @@ type E2e {
       .stderr
     assertContains(failure, "the fixture failed on purpose", "the function's error should reach the caller")
 
-    let server = container
+    let server = gitServer(module).asService
+    let ref = gitAddress(server) + "@main"
+    let remote = callClient
+      .withServiceBinding(server.hostname, server)
+      .withExec(["sh", "-c", "dagger -m \"" + ref + "\" call greet"], experimentalPrivilegedNesting: true)
+      .stdout
+    assertContains(remote, "hello world", "a module from a Git source should answer")
+    null
+  }
+
+  """
+  A Git daemon serving the module at repo.git, on branch main.
+  """
+  let gitServer(module: Directory!): Container! {
+    container
       .from("alpine:3.22")
       .withoutEntrypoint
       .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
@@ -602,17 +617,57 @@ type E2e {
       .withExec(["git", "clone", "-q", "--bare", ".", "/srv/repo.git"])
       .withExposedPort(9418)
       .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
-      .asService
-    # The engine takes a Git ref whose host has no dot for a Go import path and
-    # refuses it, so the ref names the server by its full name, in the session
-    # domain that resolv.conf searches last.
-    let ref = "git://" + server.hostname + ".$(awk '/^search/ {print $NF}' /etc/resolv.conf)/repo.git@main"
-    let remote = callClient
-      .withServiceBinding(server.hostname, server)
-      .withExec(["sh", "-c", "dagger -m \"" + ref + "\" call greet"], experimentalPrivilegedNesting: true)
+  }
+
+  """
+  The engine takes a Git ref whose host has no dot for a Go import path and
+  refuses it, so the address names the server by its full name, in the session
+  domain that resolv.conf searches last. A shell expands it.
+  """
+  let gitAddress(server: Service!): String! {
+    "git://" + server.hostname + ".$(awk '/^search/ {print $NF}' /etc/resolv.conf)/repo.git"
+  }
+
+  """
+  A client generated for a Dang module serves it and answers a PHP call that
+  passes a core Directory: from a local path, and from Git at a pinned commit
+  that main has moved past.
+  """
+  pub clientTargetCallCheck(ws: Workspace!): Void @check {
+    let local = "/" + clientTargetPath
+    let script = "<?php\nrequire 'vendor/autoload.php';\n" +
+      "use Dagger\\Clients\\FileLister\\Client;\n" +
+      "$dir = Dagger\\Dagger::getClientInstance()->directory()->withNewFile('a.txt', 'a')->withNewFile('b.txt', 'b');\n" +
+      "echo Client::fileLister()->entries($dir), PHP_EOL;\n" +
+      "echo Client::fileLister()->entries($dir->withNewFile('c.txt', 'c')), PHP_EOL;\n"
+    let php = phpSdk.mod(ws, path: entrypointModulePath, findUp: false).phpContainer
+      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
+      .withWorkdir("/sdk")
+      .withExec(["composer", "install", "--no-dev"])
+      .withMountedFile("/schema.json", ws.moduleSource(local).withEngineVersion(target).clientSchemaIntrospectionJSON)
+      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json", "--core"])
+      .withNewFile("/sdk/call.php", script)
+      .withEnvVariable("DAGGER_CLIENT_VERSION", target)
+    let codegen = "php scripts/codegen.php dagger:codegen --schema-file /schema.json --client file-lister"
+    let want = "a.txt,b.txt\na.txt,b.txt,c.txt\n"
+
+    let fromPath = php
+      .withExec(["sh", "-c", codegen + " --address " + local + " > /dev/null && php call.php"], experimentalPrivilegedNesting: true)
       .stdout
-    assertContains(remote, "hello world", "a module from a Git source should answer")
-    null
+    assert(fromPath == want, "a client of a local module should list the directory it was passed: " + fromPath)
+
+    let repo = gitServer(ws.directory(local))
+    let pin = repo.withExec(["git", "-C", "/srv/repo.git", "rev-parse", "main"]).stdout.trimSuffix("\n")
+    let server = repo
+      .withExec(["sed", "-i", "s/join(\",\")/join(\";\")/", "main.dang"])
+      .withExec(["git", "-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-qam", "list with semicolons"])
+      .withExec(["git", "push", "-q", "/srv/repo.git", "main"])
+      .asService
+    let fromGit = php
+      .withServiceBinding(server.hostname, server)
+      .withExec(["sh", "-c", codegen + " --address \"" + gitAddress(server) + "@main\" --pin " + pin + " > /dev/null && php call.php"], experimentalPrivilegedNesting: true)
+      .stdout
+    assert(fromGit == want, "a client of a Git module should load its pinned commit, not the tip of main: " + fromGit)
   }
 
   """

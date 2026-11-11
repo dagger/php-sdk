@@ -1,0 +1,11 @@
+"""
+A client target that takes a core Directory.
+"""
+type FileLister {
+  """
+  The directory's entry names, joined with commas.
+  """
+  pub entries(dir: Directory!): String! {
+    dir.entries.join(",")
+  }
+}
