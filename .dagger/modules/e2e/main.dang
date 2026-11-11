@@ -400,6 +400,9 @@ type E2e {
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"src\"]\n" + kept)) == false, "a module with include rules keeps the runtime")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept)) == false, "a module with another source keeps the runtime")
     assert(usesEntrypoint(ws.withoutFile("/" + composer)) == false, "a module without a composer.json keeps the runtime")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + kept)) == false, "a module without default function caching keeps the runtime")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = false\n" + kept)), "a module with default function caching should be eligible")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept + "\n[[clients]]\ngenerator = \"go\"\ndirectory = \"./client\"\n")) == false, "a module with pre-v2 clients keeps the runtime")
 
     let externalRepository = composerText.replace("\"./sdk\"", "\"../sdk\"")
     assert(usesEntrypoint(ws.withNewFile("/" + composer, externalRepository)) == false, "a Composer path outside the module keeps the runtime")
@@ -428,6 +431,11 @@ type E2e {
       migrated.withNewFile("/" + manifest, "include = [\"src\"]\nname = \"entrypoint-app\"\n" + entrypointTable),
       "cannot keep its generated entrypoint",
       "a generated entrypoint with include rules",
+    )
+    assertRefused(
+      migrated.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\nname = \"entrypoint-app\"\n" + entrypointTable),
+      "it sets disableDefaultFunctionCaching",
+      "a generated entrypoint without default function caching",
     )
 
     let encoding = "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nenum Encoding\n{\n    case Base64;\n    case BASE64;\n}\n"
