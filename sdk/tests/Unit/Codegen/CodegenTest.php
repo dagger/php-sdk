@@ -89,7 +89,7 @@ class CodegenTest extends TestCase
         self::assertSame(['Client.php', 'Clients', 'Container.php', 'Id.php', 'NetworkProtocol.php'], $this->files(''));
         self::assertSame(
             [
-                '.client-module', 'Client.php', 'MyLinter.php', 'MyLinterLevel.php', 'MyLinterReport.php',
+                'Client.php', 'MyLinter.php', 'MyLinterLevel.php', 'MyLinterReport.php',
                 'MyLinterRule.php', 'MyLinterRuleClient.php',
             ],
             $this->files(self::CLIENT_DIR),
@@ -128,29 +128,6 @@ class CodegenTest extends TestCase
 
         self::assertSame(['MyLinter'], $this->files('Clients'));
         self::assertSame($linter, $this->read(self::CLIENT_DIR . '/MyLinter.php'));
-    }
-
-    #[Test]
-    #[DataProvider('collidingModules')]
-    public function itRefusesAClientWhoseNamespaceIsTaken(string $module, string $name): void
-    {
-        $this->generate(self::schema(), 'my-linter');
-
-        $this->expectExceptionObject(new RuntimeException(
-            "The client $module generates into Dagger\\Clients\\$name, "
-            . 'and another client already generates into Dagger\Clients\MyLinter',
-        ));
-        try {
-            $this->generate(self::schema(), $module);
-        } finally {
-            self::assertSame(['MyLinter'], $this->files('Clients'));
-        }
-    }
-
-    public static function collidingModules(): iterable
-    {
-        yield 'equal' => ['my_linter', 'MyLinter'];
-        yield 'equal ignoring case' => ['MYLINTER', 'MYLINTER'];
     }
 
     #[Test]

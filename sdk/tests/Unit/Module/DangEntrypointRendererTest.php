@@ -10,11 +10,13 @@ use Dagger\Module\EngineNaming;
 use Dagger\ValueObject\DaggerEnum;
 use Dagger\ValueObject\DaggerEnumCase;
 use Dagger\ValueObject\DaggerObject;
+use Dagger\ValueObject\ListOfType;
 use Dagger\ValueObject\Type;
 use Generator;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -248,6 +250,22 @@ class DangEntrypointRendererTest extends TestCase
 
         self::expectException(RuntimeException::class);
         self::expectExceptionMessage('Currently cannot handle custom interfaces');
+
+        DangEntrypointRenderer::renderTypes($description, 'my-module');
+    }
+
+    #[Test]
+    #[RunInSeparateProcess]
+    public function itRefusesClientTypes(): void
+    {
+        class_alias(\stdClass::class, 'Dagger\\Clients\\FileLister\\FileLister');
+        $description = new Description([new DaggerObject(
+            name: 'DaggerModule\\MyModule',
+            fields: [new \Dagger\ValueObject\DaggerField('lister', null, new ListOfType(new Type('Dagger\\Clients\\FileLister\\FileLister')))],
+        )]);
+
+        self::expectException(RuntimeException::class);
+        self::expectExceptionMessage('The type Dagger\\Clients\\FileLister\\FileLister comes from the module client FileLister');
 
         DangEntrypointRenderer::renderTypes($description, 'my-module');
     }

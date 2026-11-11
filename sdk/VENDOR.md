@@ -15,8 +15,7 @@ Local changes to the vendored files:
   `src/Codegen/Introspection/NewCodegenVisitor.php` and `src/Command/CodegenCommand.php`
   partition the schema by `@sourceMap(module:)`. `--core`, the default, generates what
   no module contributes. `--client <module>` generates what the module contributes into
-  `generated/Clients/<Name>/`, in namespace `Dagger\Clients\<Name>`, and records the
-  module in that directory's `.client-module`.
+  `generated/Clients/<Name>/`, in namespace `Dagger\Clients\<Name>`.
 - `src/Client/AbstractClient.php` gains `serve`, which sends `serveModule` once per
   target. `src/Codegen/Introspection/NewCodegenVisitor.php`, `src/Codegen/Codegen.php`
   and `src/Command/CodegenCommand.php` generate a client's `Query` fields as static

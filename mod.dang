@@ -43,6 +43,12 @@ type Mod {
   """
   let templateName: String!
 
+  """
+  The modules the scope declares as clients, as the engine loaded them. Null when
+  the caller does not know them, as a direct mod call does not.
+  """
+  let clients: [ModuleSource!]
+
   let phpImage: String! = "php:8.4-cli-alpine@sha256:ef24d42ed7297dc8c9a6672988594c5f18702a434b3af48a3128fed8d2569746"
   let composerImage: String! = "composer/composer:2.8-bin@sha256:c735b6a52ea118693178babc601984dbbbd07f1d31ec87eaa881173622b467ed"
   let entrypointPath: String! = "sdk/entrypoint"
@@ -180,6 +186,7 @@ type Mod {
   let entrypointGenerated: Workspace! {
     checkConfig
     checkSdkOwned
+    checkClients
     let current = ws.withWorkdir(".")
     let rooted = if (fileExists("composer.json")) {
       current
@@ -230,10 +237,12 @@ type Mod {
   }
 
   """
-  The SDK library with its client generated, without what only generation needs.
+  The SDK library with its client and its module clients generated, without what
+  only generation needs. Each client's schema is read in the target view, as
+  the core schema is.
   """
   let sdkTree: Directory! {
-    phpContainer
+    let core = phpContainer
       .withDirectory(
         "/sdk",
         currentModule.source.directory("sdk"),
@@ -243,6 +252,13 @@ type Mod {
       .withExec(["composer", "install", "--no-dev"])
       .withMountedFile("/schema.json", clientSchema)
       .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
+    let generated = knownClients.reduce(core) { ctr, client =>
+      let pin = if (client.kind == ModuleSourceKind.GIT_SOURCE) { ["--pin", client.pin] } else { [] :: [String!]! }
+      ctr
+        .withMountedFile("/client-schema.json", client.withEngineVersion(targetEngineVersion).clientSchemaIntrospectionJSON)
+        .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/client-schema.json", "--client", client.moduleName, "--address", clientAddress(client)] + pin)
+    }
+    generated
       .directory("/sdk")
       .withoutDirectory("vendor")
       .withoutDirectory("scripts")
@@ -434,6 +450,51 @@ type Mod {
       }
     }
     null
+  }
+
+  """
+  Without the scope's clients, generation would drop their files. A client of
+  this module is told by its path, so one bound by a Git ref, as a module of a
+  workspace opened from Git is, passes. A client generates into a namespace
+  named after its module in PascalCase, and PHP compares class names without
+  case.
+  """
+  let checkClients: Void {
+    if (clients == null and fileExists("sdk/generated/Clients")) {
+      raise "module at " + rootPath + " has module clients, which only its scope in dagger.toml lists: run dagger generate"
+    }
+    knownClients.reduce([] :: [String!]!) { seen, client =>
+      let name = client.moduleName
+      if (clientAddress(client) == moduleRef) {
+        raise "module at " + rootPath + " declares itself as the client " + name + ", which php-sdk does not generate: remove the client"
+      }
+      let taken = seen.filter { other => namespaceKey(other) == namespaceKey(name) }
+      if (taken.length > 0) {
+        raise "module at " + rootPath + " has the clients " + (taken[0] ?? "") + " and " + name + ", which generate into one PHP namespace: remove one"
+      }
+      seen + [name]
+    }
+    null
+  }
+
+  let knownClients: [ModuleSource!]! {
+    clients ?? ([] :: [ModuleSource!]!)
+  }
+
+  let namespaceKey(name: String!): String! {
+    name.replaceMatches("[^A-Za-z0-9]", "").toLower
+  }
+
+  """
+  The address a client serves its module from. A module of the workspace is
+  addressed from the root of the caller's tree, which serveModule reads a
+  leading "/" from; a Git module by its ref, with the commit the engine
+  resolved as its pin.
+  """
+  let clientAddress(client: ModuleSource!): String! {
+    if (client.kind == ModuleSourceKind.GIT_SOURCE) { return client.asString }
+    let subpath = client.sourceRootSubpath.trimPrefix("./").trimPrefix("/").trimSuffix("/")
+    if (subpath == "" or subpath == ".") { "/" } else { "/" + subpath }
   }
 
   """

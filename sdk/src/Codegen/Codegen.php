@@ -13,8 +13,6 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 class Codegen
 {
-    private const MODULE_MARKER = '.client-module';
-
     private const RESERVED_CLASS_NAMES = [
         'abstract', 'and', 'array', 'as', 'bool', 'break', 'callable', 'case', 'catch', 'class', 'clone',
         'const', 'continue', 'declare', 'default', 'die', 'do', 'echo', 'else', 'elseif', 'empty',
@@ -115,24 +113,10 @@ class Codegen
             return [CodeWriter::NAMESPACE, $this->writeDir];
         }
         $name = self::clientName($this->module);
-        $clientsDir = $this->writeDir . DIRECTORY_SEPARATOR . 'Clients';
-        // PHP resolves names case-insensitively, so two such namespaces are one.
-        foreach (is_dir($clientsDir) ? scandir($clientsDir) : [] as $taken) {
-            $takenMarker = $clientsDir . DIRECTORY_SEPARATOR . $taken . DIRECTORY_SEPARATOR . self::MODULE_MARKER;
-            $owned = is_file($takenMarker) && file_get_contents($takenMarker) === $this->module;
-            if (strcasecmp($taken, $name) === 0 && !$owned) {
-                throw new RuntimeException(
-                    "The client {$this->module} generates into Dagger\\Clients\\$name, " .
-                    "and another client already generates into Dagger\\Clients\\$taken"
-                );
-            }
-        }
-        $dir = $clientsDir . DIRECTORY_SEPARATOR . $name;
-        $marker = $dir . DIRECTORY_SEPARATOR . self::MODULE_MARKER;
-        if ((!is_dir($dir) && !mkdir($dir, 0755, true)) || file_put_contents($marker, $this->module) === false) {
-            throw new RuntimeException("Cannot write $marker");
-        }
-        return ["Dagger\\Clients\\$name", $dir];
+        return [
+            "Dagger\\Clients\\$name",
+            $this->writeDir . DIRECTORY_SEPARATOR . 'Clients' . DIRECTORY_SEPARATOR . $name,
+        ];
     }
 
     /** @return IntrospectionType[] the types the target owns, with only the fields it owns */
