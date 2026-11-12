@@ -105,10 +105,10 @@ type PhpSdk {
   }
 
   """
-  The oldest release the generated entrypoint passed on, for modules targeting
-  v1.0.0-beta.21. It has not run again with the current target.
+  The first release whose entrypoint contract has the sources member, which
+  every generated entrypoint declares.
   """
-  let floorEngineVersion: String! = "v1.0.0-beta.17"
+  let floorEngineVersion: String! = "v1.0.0-beta.18"
 
   """
   Whether the running engine is below the floor. Released engines compare base

@@ -25,16 +25,14 @@ needs PHP 8.3 or later. Modules do not need the dev tooling, so their floor stay
 
 ## Engine requirement
 
-This module needs an engine from `v1.0.0-beta.17`, the oldest release the generated
-entrypoint passed on, including PHP's ordinary mixed-case enums.
+This module needs an engine from `v1.0.0-beta.18`. Every generated entrypoint
+declares the `sources` member of the entrypoint contract. `v1.0.0-beta.18` is the
+first release with that member. An older engine passes a workspace to `types` and
+`call`, which the generated entrypoint does not declare. No check here runs on
+`v1.0.0-beta.18`.
 
-The entrypoint failed on `v1.0.0-beta.16`. That engine sends an enum argument by its canonical
-name, `LOW` for `case Low`, which PHP cannot read. dagger/dagger
-[`67f0790ef5`](https://github.com/dagger/dagger/commit/67f0790ef53d1af013c7191eb3b730d38b93ab33)
-fixes this. The run stopped at that failure, so other modules on that release are
-untested and not supported. Modules target `v1.0.0-beta.27`: the floor only says
-which engines the SDK and the entrypoints it generates run on. Those floor results were
-for modules targeting `v1.0.0-beta.21`, and have not run again for `v1.0.0-beta.27`.
+Modules target `v1.0.0-beta.27`: the floor only says which engines the SDK and the
+entrypoints it generates run on.
 
 Earlier versions of this module documented `v1.0.0-beta.12`. On an older engine,
 `dagger generate` and `dagger module init` now stop with a message that names the
@@ -89,7 +87,7 @@ optional when it has a default value, a nullable type or `#[DefaultPath]`; other
 | `#[Up]` | `dagger start`, alias `dagger up` | non-null `Service` | `Workspace` only | [`v0.20.4`](https://github.com/dagger/dagger/blob/v0.20.4/core/schema/module.go) |
 | `#[Agent]` | `dagger agent` | non-null `LLM` | exactly one required `LLM`; any other required argument is `Workspace` or `Agent` | [`v1.0.0-beta.10`](https://github.com/dagger/dagger/blob/v1.0.0-beta.10/core/schema/module.go) |
 
-The [engine floor](#engine-requirement), `v1.0.0-beta.17`, has all four APIs and commands.
+The [engine floor](#engine-requirement), `v1.0.0-beta.18`, has all four APIs and commands.
 This repository runs no test of a role on the floor engine.
 
 Inside a `#[DaggerObject]` class, with the attributes from `Dagger\Attribute`:
@@ -241,9 +239,9 @@ the new rules. From `v1.0.0-beta.22`, each release has an API view of its own, a
 client is generated against the `v1.0.0-beta.27` view.
 
 The `targetVersion` setting, or `--target-version`, pins a module to another release
-from `v1.0.0-beta.17` to `v1.0.0-beta.27`, which the client schema,
+from `v1.0.0-beta.18` to `v1.0.0-beta.27`, which the client schema,
 `DAGGER_CLIENT_VERSION` and `dang.toml` then use. Generation refuses a value that is
-not a release, is later than `v1.0.0-beta.27` or is below `v1.0.0-beta.17`, and refuses
+not a release, is later than `v1.0.0-beta.27` or is below `v1.0.0-beta.18`, and refuses
 a pin on a module that keeps the PHP runtime, which the engine generates for its
 manifest's `engineVersion`. The checks here pin only `v1.0.0-beta.24`.
 
