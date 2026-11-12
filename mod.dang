@@ -188,9 +188,10 @@ type Mod {
     checkSdkOwned
     checkClients
     checkOutsidePaths(true)
-    let written = withoutSdk
+    let locked = withoutSdk
       .withDirectory(modulePath("sdk"), generatedSdk)
       .withNewFile(modulePath("composer.lock"), describing.file("composer.lock").contents, permissions: 420)
+    let written = if (wiresSdkRepository) { locked.withNewFile(modulePath("composer.json"), describing.file("composer.json").contents, permissions: 420) } else { locked }
     withGitVisibility(withManifest(withConfig(written)))
   }
 
@@ -200,7 +201,9 @@ type Mod {
   """
   let describing: Container! {
     let sdk = sdkTree
-    let installed = if (composerFilesFirst) {
+    let installed = if (wiresSdkRepository) {
+      withSdkPackage(sourceWithSdk(sdk))
+    } else if (composerFilesFirst) {
       let root = "/work/" + rootPath
       let files = seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"] + excludedPatterns, gitignore: true)
       let composer = withOutsideDirectories
@@ -282,29 +285,37 @@ type Mod {
     if (hasComposer == false) {
       raise label + " has no composer.json, which autoloads its clients: create one with composer init, or remove the clients " + knownClients.map { client => client.moduleName }.join(", ")
     }
+    checkSdkOwned
+    checkClients
+    checkOutsidePaths(false)
+    let sdk = sdkTree
+    let wired = withSdkPackage(sourceWithSdk(sdk))
+    withoutSdk
+      .withDirectory(modulePath("sdk"), sdk)
+      .withNewFile(modulePath("composer.json"), wired.file("composer.json").contents, permissions: 420)
+      .withNewFile(modulePath("composer.lock"), wired.file("composer.lock").contents, permissions: 420)
+  }
+
+  """
+  The source with its composer.json requiring dagger/dagger from the path
+  repository ./sdk, which holds the SDK and its clients, and its composer.lock
+  following. Composer's own commands keep the other keys.
+  """
+  let withSdkPackage(source: Container!): Container! {
     let keyTaken = toString(parsedJson(contentsOf("composer.json")).field(["repositories", "dagger-sdk"]).contents) rescue {
       err: Error => ""
     }
     if (usesSdkRepository == false and keyTaken != "") {
       raise label + " names a Composer repository dagger-sdk, which composer config would replace with ./sdk: rename it"
     }
-    checkSdkOwned
-    checkClients
-    checkOutsidePaths(false)
-    let sdk = sdkTree
-    let source = sourceWithSdk(sdk)
     let repository = if (usesSdkRepository) { source } else { source.withExec(["composer", "config", "repositories.dagger-sdk", "path", "./sdk"]) }
     let wired = repository
       .withExec(["composer", "require", "--no-update", "dagger/dagger:*@dev"])
       .withExec(composerCommand)
-    let lock = wired.file("composer.lock").contents
-    if (lock.containsMatch(Regexp(sdkLockPattern)) == false) {
-      raise label + " has a Composer repository that provides dagger/dagger in place of ./sdk, which holds its clients: remove that repository, or the filters on ./sdk"
+    if (wired.file("composer.lock").contents.containsMatch(Regexp(sdkLockPattern)) == false) {
+      raise label + " has a Composer repository that provides dagger/dagger in place of ./sdk, which holds the SDK and its clients: remove that repository, or the filters on ./sdk"
     }
-    withoutSdk
-      .withDirectory(modulePath("sdk"), sdk)
-      .withNewFile(modulePath("composer.json"), wired.file("composer.json").contents, permissions: 420)
-      .withNewFile(modulePath("composer.lock"), lock, permissions: 420)
+    wired
   }
 
   """
@@ -389,8 +400,9 @@ type Mod {
   cached. Scripts, plugins, patches, repository options and repositories other
   than ./sdk could read the source, so their mere mention keeps the install
   after the source, as does a JSON unicode escape, which could spell one of them.
-  The entrypoint is generated with the choice: a module that adds one of them
-  later must be generated again.
+  The entrypoint is generated with the choice, made for the composer.json
+  generation writes: a module that adds one of them later must be generated
+  again.
   """
   let composerFilesFirst: Boolean! {
     if (fileExists("composer.json") == false) {
@@ -398,7 +410,17 @@ type Mod {
     }
     let text = contentsOf("composer.json")
     let readers = ["\"scripts\"", "\"allow-plugins\"", "\"patches", "\"options\"", "\\u"].filter { key => text.contains(key) }
-    usesSdkRepository and repositories.length == 1 and readers.length == 0
+    let added = if (usesSdkRepository) { 0 } else { 1 }
+    repositories.length + added == 1 and readers.length == 0
+  }
+
+  """
+  Whether generation adds the path repository ./sdk to the module's
+  composer.json. composer require would replace a dagger/dagger constraint the
+  module chose, so a module that has the repository is left as it is.
+  """
+  let wiresSdkRepository: Boolean! {
+    fileExists("composer.json") and usesSdkRepository == false
   }
 
   let composerCommand: [String!]! {
@@ -768,8 +790,7 @@ type Mod {
         .filter { path => leavesModule(path) and workspacePath(path) == "" }
         .map { path => "Composer reads " + path + " outside the module" }
       let vendorDir = if (composer.fields.contains("config")) { stringField(composer.field(["config"]), "vendor-dir") } else { "" }
-      (if (usesSdkRepository) { [] :: [String!]! } else { ["composer.json has no path repository ./sdk"] }) +
-        external +
+      external +
         (if (vendorDir == "" or vendorDir == "vendor") { [] :: [String!]! } else { ["composer.json moves vendor-dir to " + vendorDir] })
     }
   }

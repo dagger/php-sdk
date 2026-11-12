@@ -162,7 +162,6 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 - `disableDefaultFunctionCaching = true` or a `[[clients]]` table
 - an `engineVersion` later than `v1.0.0-beta.27`
 - a `source` other than the module directory
-- a `composer.json` without the `./sdk` path repository
 - a Composer path or autoload path that is absolute, starts with `~`, holds a
   variable, has a `..` after a directory name, leaves the workspace, or names the
   workspace root
@@ -182,6 +181,15 @@ A module without `composer.json` also moves to the entrypoint. Generation first
 adds the starter template's files that the module does not have, as the engine's
 PHP runtime does. The `template` setting selects the template. A new module in a
 directory that already has a `composer.json` keeps it and gets no starter files.
+
+A module whose `composer.json` has no path repository `./sdk` also moves to the
+entrypoint. Generation adds that repository and the requirement
+`dagger/dagger: *@dev` with Composer's own commands, as it does for a PHP
+program. [Module clients](#module-clients) describes that wiring. These commands
+keep the other keys but may reformat the file. They replace a `dagger/dagger`
+requirement that the module already has, such as a version from Packagist. A
+module that already has the `./sdk` repository keeps its `composer.json`
+unchanged.
 
 A Composer path repository or autoload directory outside the module, such as `../lib`,
 moves with the module. The generated entrypoint's `sources` returns each such
@@ -401,10 +409,11 @@ Generation fails, and applies none of its changes, in these cases:
 
 - The module keeps the PHP runtime; see [Generated entrypoint](#generated-entrypoint).
 - A scope without a module and without `composer.json` is given clients.
-- A program's `composer.json` names another repository `dagger-sdk`, which
-  generation would replace with `./sdk`.
-- A program's Composer repositories install `dagger/dagger` from somewhere other
-  than `./sdk`, such as an earlier repository or a filter on `./sdk`.
+- A program's `composer.json`, or a module's without the `./sdk` repository, names
+  another repository `dagger-sdk`, which generation would replace with `./sdk`.
+- The Composer repositories of such a program or module install `dagger/dagger`
+  from somewhere other than `./sdk`, such as an earlier repository or a filter on
+  `./sdk`.
 - A client is the module itself, by its path. A module of a workspace opened from
   Git can arrive as a Git client, which this check does not catch.
 - Two clients have the same name once case and separators are ignored, such as

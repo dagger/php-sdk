@@ -605,6 +605,17 @@ type E2e {
     assert(installsFromComposerFiles(ws.withNewFile("/" + composer, scripts)) == false, "a module with scripts should install after its source")
     let escaped = composerText.replace("\"url\": \"./sdk\"", "\"url\": \"./sdk\", \"\\u006fptions\": {\"symlink\": false}")
     assert(installsFromComposerFiles(ws.withNewFile("/" + composer, escaped)) == false, "a module with an escaped key should install after its source")
+    let unwired = composerText
+      .replace("  \"repositories\": [\n    {\n      \"type\": \"path\",\n      \"url\": \"./sdk\"\n    }\n  ],\n", "")
+      .replace(",\n    \"dagger/dagger\": \"*@dev\"", "")
+    let wired = generatedEntrypoint(ws.withNewFile("/" + composer, unwired))
+    let wiredComposer = contentsOf(wired, composer)
+    assertContains(contentsOf(wired, manifest), "source = \"./sdk/entrypoint\"", "a module without the ./sdk repository should move to the entrypoint")
+    assertContains(wiredComposer, "\"url\": \"./sdk\"", "a module should get the path repository ./sdk")
+    assertContains(wiredComposer, "\"dagger/dagger\": \"*@dev\"", "a module should require dagger/dagger")
+    assertContains(wiredComposer, "\"php\": \"8.3.7\"", "a module's other Composer keys should be kept")
+    assertContains(contentsOf(wired, entrypointModulePath + "/sdk/entrypoint/build.dang"), "\"--no-autoloader\"", "a module given the ./sdk repository should install from its Composer files alone")
+    assertNoChange(wired, "a module given the ./sdk repository")
 
     let entrypointTable = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
     assert(
