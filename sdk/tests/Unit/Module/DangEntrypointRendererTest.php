@@ -290,9 +290,17 @@ class DangEntrypointRendererTest extends TestCase
         self::assertStringContainsString('{ raise err }', $main);
         self::assertStringContainsString('raise stderr', $main);
         self::assertStringContainsString(
-            'PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed',
+            'PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath, exclude: []).installed',
             $main,
         );
+    }
+
+    #[Test]
+    public function itLeavesTheExcludedPatternsOutOfTheBuild(): void
+    {
+        $main = DangEntrypointRenderer::renderMain('v1.0.0-beta.27', [], ['src/tmp', '**/*.log']);
+
+        self::assertStringContainsString('subPath: currentModule.sourceSubpath, exclude: ["src/tmp", "**/*.log"]).installed', $main);
     }
 
     #[Test]

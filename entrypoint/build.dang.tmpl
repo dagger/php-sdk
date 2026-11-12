@@ -3,6 +3,11 @@
 type PhpModuleBuild {
   pub contextDir: Directory!
   pub subPath: String!
+  pub exclude: [String!]!
+
+  let excluded: [String!]! {
+    exclude.map { pattern => if (subPath == ".") { pattern } else { subPath + "/" + pattern } }
+  }
 
   # The installs opt out of Dagger in Dagger: the engine keys a nested exec of an
   # entrypoint on its module, source included, so a nested exec would install

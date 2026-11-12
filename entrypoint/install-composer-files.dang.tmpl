@@ -2,5 +2,5 @@
       .withNewFile("/src/" + subPath + "/sdk/composer.json", contextDir.file(subPath + "/sdk/composer.json").contents)
       .withDirectory("/src/" + subPath, if (contextDir.exists(subPath + "/composer.lock")) { directory.withNewFile("composer.lock", contextDir.file(subPath + "/composer.lock").contents) } else { directory })
       .withExec(["composer", "install", "--no-autoloader"], disableDaggerInDagger: true)
-      .withDirectory("/src", contextDir.withoutDirectory(subPath + "/vendor"))
+      .withDirectory("/src", contextDir.withoutDirectory(subPath + "/vendor"), exclude: excluded)
       .withExec(["composer", "dump-autoload"], disableDaggerInDagger: true)

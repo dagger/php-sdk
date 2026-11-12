@@ -84,6 +84,12 @@ class EntrypointApp
     }
 
     #[Attribute\DaggerFunction]
+    public function hasFile(string $path): bool
+    {
+        return file_exists(dirname(__DIR__) . '/' . $path);
+    }
+
+    #[Attribute\DaggerFunction]
     public function fail(): string
     {
         throw new RuntimeException('the fixture failed on purpose');
