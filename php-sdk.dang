@@ -19,7 +19,7 @@ type PhpSdk {
   """
   Starter template under templates/<template> for a module without composer.json.
   """
-  pub template: String! = "minimal"
+  pub template: String! = "default"
 
   """
   The engine release a module's generated code targets: the floor or later, and
@@ -98,10 +98,10 @@ type PhpSdk {
   let targetEngineVersion: String! = "v1.0.0-beta.27"
 
   """
-  The template the `template` setting names, `minimal` when it is empty.
+  The template the `template` setting names, `default` when it is empty.
   """
   let selectedTemplate: String! {
-    if (template == "") { "minimal" } else { template }
+    if (template == "") { "default" } else { template }
   }
 
   """
