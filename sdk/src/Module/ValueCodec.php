@@ -6,12 +6,14 @@ namespace Dagger\Module;
 
 use Dagger\Attribute;
 use Dagger\Client;
+use Dagger\Client\QueryBuilder;
 use Dagger\Id;
 use Dagger\Json;
 use Dagger\Service\Serialisation;
 use Dagger\TypeDefKind;
 use Dagger\ValueObject\ListOfType;
 use Dagger\ValueObject\Type;
+use GraphQL\Exception\QueryError;
 use InvalidArgumentException;
 use ReflectionClass;
 use ReflectionNamedType;
@@ -127,7 +129,47 @@ final readonly class ValueCodec
             throw new InvalidArgumentException("No class $class exists; run dagger generate");
         }
 
-        return $this->client->loadObjectFromId($class, new Id($id), constant("$class::GRAPHQL_TYPE"));
+        $typeName = constant("$class::GRAPHQL_TYPE");
+        $this->refuseMissingType($typeName);
+
+        return $this->client->loadObjectFromId($class, new Id($id), $typeName);
+    }
+
+    /**
+     * The engine namespaces an interface under the name the module is loaded
+     * as, which the module cannot ask for (dagger/dagger core/schema/module.go,
+     * CurrentModule.naming), so a dependency alias is refused here. A name is
+     * looked up once per process, not once per value of a list.
+     */
+    private function refuseMissingType(string $typeName): void
+    {
+        static $present = [];
+        if (isset($present[$typeName])) {
+            return;
+        }
+
+        $lookup = new QueryBuilder('__type');
+        $lookup->setArgument('name', $typeName);
+        $lookup->selectField('name');
+        $error = null;
+        try {
+            $found = $this->client->queryLeaf($lookup, 'name') === $typeName;
+        } catch (QueryError $error) {
+            // The engine answers an unknown name with this error, not with null.
+            if (!str_contains($error->getMessage(), "unknown type: \"$typeName\"")) {
+                throw $error;
+            }
+            $found = false;
+        }
+
+        if (!$found) {
+            throw new InvalidArgumentException(sprintf(
+                'The schema has no interface %s: a module loaded under another name, as a dependency'
+                    . ' alias, cannot take its interfaces yet',
+                $typeName,
+            ), previous: $error);
+        }
+        $present[$typeName] = true;
     }
 
     /**

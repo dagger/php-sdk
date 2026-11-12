@@ -1,0 +1,8 @@
+"""
+Loads the geometry module under another name, which renames its interface.
+"""
+type Alias {
+  pub describe: String! {
+    geo.describe(shapes.square(1))
+  }
+}
