@@ -54,8 +54,8 @@ type PhpSdk {
   Generate one SDK scope: the module at the workspace cwd, when the scope is a
   module. A scope without a module config is given a dagger-module.toml. A
   self-contained module then moves to the entrypoint this SDK generates, seeded
-  from the `template` setting when it has no composer.json; see
-  Mod.usesEntrypoint. The module's clients are generated into its sdk/. A scope
+  from the `template` setting when it has no composer.json, and any other module
+  on the PHP runtime is refused; see Mod.usesEntrypoint. The module's clients are generated into its sdk/. A scope
   without a module is a PHP program: its clients are generated the same way, and
   an sdk/ this SDK wrote is regenerated once they are all removed.
   """
@@ -163,22 +163,13 @@ type PhpSdk {
 
   """
   The module at path, generating for the release a targetVersion setting names.
-  A pin or a client on a module that keeps the PHP runtime is refused: the engine
-  regenerates that module for its manifest's engineVersion, without clients. A
-  client module that declares a release on the other side of the identifier-casing
+  A client module that declares a release on the other side of the identifier-casing
   cut from that release is refused too; see checkClientReleases.
   """
   let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion, clients: [ModuleSource!] = null): Mod! {
     let target = targetRelease(subject, setting)
     let mod = modAt(path, ws, name, target, declaresLaterEngine(ws, path), clients)
-    let given = clients ?? ([] :: [ModuleSource!]!)
-    if (setting != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
-      raise subject + " pins targetVersion " + target + ", which applies to the generated entrypoint only: this module keeps the PHP runtime, which generates for the engineVersion of its manifest. Remove targetVersion from the scope's settings in dagger.toml"
-    }
-    if (given.length > 0 and mod.skipGenerate == false and mod.usesEntrypoint == false) {
-      raise subject + " keeps the PHP runtime, whose sdk/ the engine generates without clients: move the module to the generated entrypoint, or remove the clients " + clientNames(given)
-    }
-    checkClientReleases(subject, target, given)
+    checkClientReleases(subject, target, clients ?? ([] :: [ModuleSource!]!))
     mod
   }
 
@@ -198,10 +189,6 @@ type PhpSdk {
       null
     }
     null
-  }
-
-  let clientNames(clients: [ModuleSource!]!): String! {
-    clients.map { client => client.moduleName }.join(", ")
   }
 
   """

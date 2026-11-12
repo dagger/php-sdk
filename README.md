@@ -36,9 +36,8 @@ entrypoints it generates run on.
 
 Earlier versions of this module documented `v1.0.0-beta.12`. On an older engine,
 `dagger generate` and `dagger module init` now stop with a message that names the
-engine, including for a module that keeps the built-in runtime. Upgrade the engine
-to generate. The engine resolves its built-in PHP runtime from
-`github.com/dagger/dagger/sdk/php`, not from this module. A module already on the
+engine. Upgrade the engine to generate. The engine resolves its built-in PHP
+runtime from `github.com/dagger/dagger/sdk/php`, not from this module. A module already on the
 built-in runtime therefore still loads on that engine, without this module
 generating it. An engine below the floor is not supported.
 
@@ -149,18 +148,24 @@ entrypoint, and the engine runs a function through it, including its
 [role](#function-roles). Commit `sdk/` and
 `composer.lock`: a module loaded from Git needs them.
 
-A module moves to the entrypoint when it is self-contained. A module that has any
-of the following keeps the runtime in its manifest and gets no `dang.toml`:
+A module on the built-in PHP runtime moves to the entrypoint when it is
+self-contained. This SDK no longer has the engine generate a module on that
+runtime. Generation refuses a module that has any of the following and changes
+nothing. The refusal names each reason it finds from the module's files and
+points to [Migrate from the built-in PHP runtime](#migrate-from-the-built-in-php-runtime).
+An exclusion of a file generation writes is found only by generating the module,
+so it is reported once the other reasons are fixed.
 
 - `[[dependencies]]`, in `dagger call php-sdk mod ... generate` only, which does
-  not know the scope's clients
+  not know the scope's clients: run `dagger generate`
 - `blueprint` or `toolchains`
 - an exclusion outside the module, an `include` pattern outside the module that
   is a glob, or a plain `include` pattern after an exclusion, unless it names a
   directory beside the module rather than one above it
 - an exclusion of a file generation writes, such as `sdk/` or `composer.json`
 - an exclusion of a name that starts with `!`
-- `disableDefaultFunctionCaching = true` or a `[[clients]]` table
+- `disableDefaultFunctionCaching = true`
+- a `[[clients]]` table
 - an `engineVersion` later than `v1.0.0-beta.27`
 - a `source` other than the module directory
 - a Composer path or autoload path that is absolute, starts with `~`, holds a
@@ -170,12 +175,9 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 - an `include` path outside the module that is absolute, holds a variable, leaves
   the workspace, or names the workspace root
 - a Composer `vendor-dir` other than `vendor`
-- a runtime other than `php`
 
-To move such a module, remove what keeps it there and run `dagger generate`.
-[Move a module to the entrypoint](#move-a-module-to-the-entrypoint) gives the
-steps for the layouts that need more than that. This SDK does not move a module
-with a runtime other than `php`, or with an entrypoint it did not write, to the
+This SDK does not move
+a module with a runtime other than `php`, or with an entrypoint it did not write, to the
 generated entrypoint.
 
 A module without `composer.json` also moves to the entrypoint. Generation first
@@ -266,19 +268,16 @@ use Dagger\Clients\Lister\Client as Lister;
 $report = Lister::lister()->lint($source);
 ```
 
-A module already on the generated entrypoint fails to generate when it gains a
-pattern that keeps a module on the runtime. It also fails when it gains such a
-Composer path. In `dagger call php-sdk mod ... generate`, a generated entrypoint
-with `[[dependencies]]` and a `[runtime]` reads as a runtime manifest. That
-generation refuses a generated entrypoint with `[[dependencies]]` and no
-`[runtime]`, because it does not know the clients that provide them. dagger/dagger
-v1.0.0-beta.27 accepts that manifest (`core/modules/config_fat_manifest.go`).
+A module already on the generated entrypoint fails to generate when it gains one
+of these patterns or Composer paths. `dagger call php-sdk mod ... generate`
+refuses a generated entrypoint with `[[dependencies]]`, because it does not know
+the clients that provide them.
 
 Generating the entrypoint fails for an enum whose cases the engine would give one name,
 such as `Low` and `LOW`, because the engine would replace one with the other without
 an error. The message names the enum and both cases. The failed generation applies none
 of its changes: the module's manifest and `sdk/` stay as they were, so a module moving
-from the built-in runtime stays on it until you rename one of the cases and update its
+from the built-in runtime stays as it was until you rename one of the cases and update its
 references. The engine can still update the workspace's `dagger.lock` when the session
 ends. A generated entrypoint gets this check the next time it is generated.
 
@@ -304,11 +303,31 @@ received as an argument. An object field cannot hold a module interface. A modul
 interface needs a target from `v1.0.0-beta.26`. A module loaded under another
 name, as a dependency alias, cannot take its own interfaces.
 
-### Move a module to the entrypoint
+### Migrate from the built-in PHP runtime
+
+Earlier releases of this SDK had the engine generate a module that stayed on the
+built-in PHP runtime. Generation now refuses such a module, with the reasons
+listed in [Generated entrypoint](#generated-entrypoint), and the refusal points
+here. One such module stops `dagger generate` for its whole scope. The module
+still loads, because the engine regenerates it when it loads.
+
+To move the module, fix each reason, then run `dagger generate`:
+
+- `[[dependencies]]`: add each dependency as a client with `dagger module client
+  add`; see [Module clients](#module-clients).
+- `engineVersion` later than `v1.0.0-beta.27`: set it to `v1.0.0-beta.27` or
+  lower.
+- `blueprint`: the generated entrypoint has no equivalent; remove it.
+- `toolchains`: run `dagger module migrate`, which records them as clients.
+- `disableDefaultFunctionCaching = true`: remove it. The generated entrypoint
+  caches every function by default, and no PHP attribute sets a cache policy.
+- `[[clients]]`: remove the table and add each client with `dagger module client
+  add`.
+- `source`, `vendor-dir`, `include` and `exclude`: follow the steps below.
 
 No check here runs these steps.
 
-A module whose `source` is not the module directory keeps the runtime. The
+A module whose `source` is not the module directory is refused. The
 generated entrypoint builds from the module directory, and a version 2 manifest
 has no `source` key. To move the module:
 
@@ -324,13 +343,13 @@ it, also moves the module. That changes the module's directory, which
 the module's directory.
 
 A module whose `composer.json` sets `config.vendor-dir` to a directory other than
-`vendor` keeps the runtime. The generated entrypoint loads `vendor/autoload.php`.
+`vendor` is refused. The generated entrypoint loads `vendor/autoload.php`.
 To move the module:
 
 1. Remove `config.vendor-dir` from `composer.json`.
 2. Run `dagger generate`.
 
-A module whose `include` or `exclude` pattern keeps the runtime needs the pattern
+A module whose `include` or `exclude` pattern is refused needs the pattern
 changed. To move the module:
 
 1. Change an `include` glob outside the module to the directory it reads, such as
@@ -345,9 +364,8 @@ changed. To move the module:
 
 A module with an entrypoint this SDK did not write keeps that entrypoint.
 Generation does not change the entrypoint, and the engine runs it as written. A
-module in a PHP scope whose runtime is not `php` keeps that runtime. `dagger
-generate` applies that runtime's code generation, and this SDK adds no files of
-its own.
+module in a PHP scope whose runtime is not `php` keeps that runtime, and
+generation changes no files.
 
 ### Git
 
@@ -401,8 +419,8 @@ The `targetVersion` setting, or `--target-version`, pins a module to another rel
 from `v1.0.0-beta.18` to `v1.0.0-beta.27`, which the client schema,
 `DAGGER_CLIENT_VERSION` and `dang.toml` then use. Generation refuses a value that is
 not a release, is later than `v1.0.0-beta.27` or is below `v1.0.0-beta.18`, and refuses
-a pin on a module that keeps the PHP runtime, which the engine generates for its
-manifest's `engineVersion`. The checks here pin only `v1.0.0-beta.24`.
+a pin on a module that cannot move from the PHP runtime. The checks here pin only
+`v1.0.0-beta.24`.
 
 `dagger.toml` records the setting for a module's scope under
 `[sdks.<name>.scopes."<path>".settings]`. `dagger generate` passes that record to
@@ -465,7 +483,7 @@ in. Commit `sdk/`, `composer.json` and `composer.lock`.
 
 Generation fails, and applies none of its changes, in these cases:
 
-- The module keeps the PHP runtime; see [Generated entrypoint](#generated-entrypoint).
+- The module cannot move from the PHP runtime; see [Generated entrypoint](#generated-entrypoint).
 - A scope without a module and without `composer.json` is given clients.
 - A program's `composer.json`, or a module's without the `./sdk` repository, names
   another repository `dagger-sdk`, which generation would replace with `./sdk`.

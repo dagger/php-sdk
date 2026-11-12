@@ -68,6 +68,26 @@ type E2e {
     phpSdk.mod(ws, path: entrypointModulePath, findUp: false).usesEntrypoint
   }
 
+  """
+  The message a direct generation of the module at path fails with, or the
+  workspace cwd when it does not fail.
+  """
+  let directError(ws: Workspace!, path: String! = entrypointModulePath): String! {
+    phpSdk.mod(ws, path: path, findUp: false).generated.cwd rescue {
+      err: Error => err.message
+    }
+  }
+
+  """
+  Assert that a direct generation refuses the module at path as a module on the
+  PHP runtime that cannot move to the entrypoint, for reason.
+  """
+  let assertMoveRefused(ws: Workspace!, what: String!, reason: String!, path: String! = entrypointModulePath): Void {
+    let message = directError(ws, path)
+    assertContains(message, "cannot move to the generated entrypoint", what + " should be refused")
+    assertContains(message, reason, what + " was refused for the wrong reason")
+  }
+
   let installsFromComposerFiles(ws: Workspace!): Boolean! {
     contentsOf(generatedEntrypoint(ws), entrypointModulePath + "/sdk/entrypoint/build.dang").contains("\"--no-autoloader\"")
   }
@@ -89,7 +109,7 @@ type E2e {
   }
 
   let assertNoChange(ws: Workspace!, what: String!): Void {
-    assert(generatedEntrypoint(ws).changes(ws).isEmpty, what + " changed on a second generation")
+    assert(generatedEntrypoint(ws).changes(ws).isEmpty, what + " changed on generation")
   }
 
   let withConfig(ws: Workspace!, contents: String!): Workspace! {
@@ -179,7 +199,8 @@ type E2e {
   one module path deeper, and the scope stays the cwd.
 
   The module has a manifest only, so generation seeds the template, as the PHP
-  runtime would, and moves the module to the entrypoint.
+  runtime would, and moves the module to the entrypoint. The same module with a
+  source directory is refused, and the refusal names the README's migration.
   """
   pub generateExistingModuleCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
@@ -205,6 +226,12 @@ type E2e {
     assert(contains(changes.addedPaths, rootingModulePath + "/composer.json"), "a module without a composer.json should be seeded")
     assert(contains(changes.addedPaths, rootingModulePath + "/src/RootingApp.php"), "the seeded template should name the module's class")
     assertContains(generated.file("dagger-module.toml").contents, "source = \"./sdk/entrypoint\"", "a seeded module should move to the entrypoint")
+
+    let manifest = rootingModulePath + "/dagger-module.toml"
+    let withSource = ws.withNewFile("/" + manifest, "source = \"./php\"\n" + contentsOf(ws, manifest))
+    let refusal = generationError(withSource, path: rootingModulePath, name: "rooting-app")
+    assertContains(refusal, "is on the PHP runtime, which this SDK no longer generates, and cannot move to the generated entrypoint: its source is php", "a module with a source directory should be refused")
+    assertContains(refusal, "See \"Migrate from the built-in PHP runtime\" in the php-sdk README", "the refusal should name the migration")
     null
   }
 
@@ -288,7 +315,7 @@ type E2e {
 
     let manifest = entrypointModulePath + "/dagger-module.toml"
     let runtime = generationError(local.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + contentsOf(local, manifest)), clients: [lister])
-    assertContains(runtime, "keeps the PHP runtime, whose sdk/ the engine generates without clients: move the module to the generated entrypoint, or remove the clients file-lister", "a client of a module that keeps the runtime should be refused")
+    assertContains(runtime, "cannot move to the generated entrypoint: it sets disableDefaultFunctionCaching", "a module on the PHP runtime that cannot move should be refused, with or without clients")
     let onTarget = local.withNewFile("/" + manifest, contentsOf(local, manifest).replace("v1.0.0-beta.21", target))
     let itself = generationError(onTarget, clients: [lister, onTarget.moduleSource("/" + entrypointModulePath)])
     assertContains(itself, "declares itself as the client entrypoint-app", "a client of the scope's own module should be refused")
@@ -434,7 +461,8 @@ type E2e {
 
   """
   What counts as this SDK's: the entrypoint path alone does not, so another SDK's
-  entrypoint, a custom one and a stray dang.toml stay out of generation.
+  entrypoint, a custom one, a runtime other than php and a stray dang.toml stay
+  out of generation, which changes nothing for the first three.
   """
   pub entrypointOwnershipCheck(ws: Workspace!): Void @check {
     let generated = generatedEntrypoint(ws)
@@ -446,14 +474,15 @@ type E2e {
 
     let foreign = generated.withNewFile("/" + build, "type PythonModuleBuild {}\n")
     assert(phpSdk.mod(foreign, path: entrypointModulePath, findUp: false).ownsEntrypoint == false, "another SDK's entrypoint at the same path should not be recognized")
-    assert(usesEntrypoint(foreign) == false, "another SDK's entrypoint should stay out of generation")
+    assertNoChange(foreign, "another SDK's entrypoint")
     let lookup = phpSdk.mod(foreign, path: entrypointModulePath + "/src").rootPath rescue {
       err: Error => err.message
     }
     assertContains(lookup, "does not use the PHP SDK", "find-up should not take another SDK's entrypoint for PHP")
 
     let custom = generated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[entrypoint]\nkind = \"dang\"\nsource = \"./custom\"\n")
-    assert(usesEntrypoint(custom) == false, "a custom entrypoint should stay out of generation")
+    assertNoChange(custom, "a custom entrypoint")
+    assertNoChange(generated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\nengineVersion = \"" + target + "\"\n\n[runtime]\nsource = \"go\"\n"), "a module on a runtime other than php")
 
     assertRefused(
       ws.withNewFile("/" + entrypointConfigPath, "dang = \"2.1\"\n"),
@@ -470,7 +499,7 @@ type E2e {
 
   """
   An eligible module moves to the entrypoint and keeps its settings. A module the
-  entrypoint cannot run keeps the runtime, and neither is dropped silently.
+  entrypoint cannot run is refused, and no setting is dropped silently.
   """
   pub entrypointMigrationCheck(ws: Workspace!): Void @check {
     let manifest = entrypointModulePath + "/dagger-module.toml"
@@ -547,7 +576,13 @@ type E2e {
     let kept = "name = \"entrypoint-app\"\nengineVersion = \"v1.0.0-beta.21\"\n\n[runtime]\nsource = \"php\"\n"
     let dependency = kept + "\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n"
     assert(usesEntrypoint(ws), "the fixture should be eligible")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, dependency)) == false, "a module with dependencies keeps the runtime")
+    assertContains(directError(ws.withNewFile("/" + manifest, dependency)), "a direct generation does not know the clients of its scope", "a direct generation of a module with dependencies should be refused")
+    let several = "source = \"./php\"\ndisableDefaultFunctionCaching = true\n" + dependency.replace("v1.0.0-beta.21", "v1.1.0")
+    assertMoveRefused(
+      ws.withNewFile("/" + manifest, several),
+      "a module with several reasons",
+      "it has dependencies, and a direct generation does not know the clients of its scope, which provide them: run dagger generate; its engineVersion is later than v1.0.0-beta.27; it sets disableDefaultFunctionCaching; its source is php. See",
+    )
     let filtered = "include = [\"src\", \"composer.json\", \"!src/tmp\"]\nexclude = [\"notes\"]\n" + kept
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, filtered)), "a module with include and exclude patterns should be eligible")
     let translated = generatedEntrypoint(ws.withNewFile("/" + manifest, filtered))
@@ -555,16 +590,16 @@ type E2e {
     assertContains(contentsOf(translated, manifest), "\"!notes\"", "an exclude entry should be kept as a negated include pattern")
     assertContains(contentsOf(translated, entrypointModulePath + "/sdk/entrypoint/main.dang"), "exclude: [\"src/tmp\", \"notes\"]", "the build should leave the excluded patterns out")
     assertNoChange(translated, "a module with include patterns")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!src/tmp\", \"src/tmp/keep\"]\n" + kept)) == false, "a pattern after an exclusion keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!../lib\"]\n" + kept)) == false, "an exclusion outside the module keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"../lib/*.php\"]\n" + kept)) == false, "an outside glob keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "exclude = [\"sdk\"]\n" + kept)) == false, "an exclusion of the generated sdk/ keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!composer.*\"]\n" + kept)) == false, "an exclusion of composer.json keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!!notes\"]\n" + kept)) == false, "an exclusion of a name that starts with ! keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!./!notes\"]\n" + kept)) == false, "an exclusion that normalizes to a name that starts with ! keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "exclude = [\"sdk/entrypoint/types.dang\"]\n" + kept)) == false, "an exclusion of a generated entrypoint file keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "exclude = [\"sdk/src\"]\n" + kept)) == false, "an exclusion of the SDK library keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!notes\", \"..\"]\n" + kept)) == false, "an ancestor of the module after an exclusion keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!src/tmp\", \"src/tmp/keep\"]\n" + kept), "a pattern after an exclusion", "its include pattern src/tmp/keep includes again after an exclusion")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!../lib\"]\n" + kept), "an exclusion outside the module", "its include pattern !../lib excludes outside the module")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"../lib/*.php\"]\n" + kept), "an outside glob", "its include pattern ../lib/*.php outside the module is a glob")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "exclude = [\"sdk\"]\n" + kept), "an exclusion of the generated sdk/", "its exclusion sdk drops files the generated entrypoint needs")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!composer.*\"]\n" + kept), "an exclusion of composer.json", "its exclusion composer.* drops files the generated entrypoint needs")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!!notes\"]\n" + kept), "an exclusion of a name that starts with !", "its include pattern !!notes excludes a name that starts with !")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!./!notes\"]\n" + kept), "an exclusion that normalizes to a name that starts with !", "its include pattern !./!notes excludes a name that starts with !")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "exclude = [\"sdk/entrypoint/types.dang\"]\n" + kept), "an exclusion of a generated entrypoint file", "its exclusion sdk/entrypoint/types.dang drops files")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "exclude = [\"sdk/src\"]\n" + kept), "an exclusion of the SDK library", "its exclusion sdk/src drops files")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!notes\", \"..\"]\n" + kept), "an ancestor of the module after an exclusion", "its include pattern .. includes again after an exclusion")
     let hidden = ws.withNewFile(
       "/" + entrypointModulePath + "/src/Hidden.php",
       "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nclass Hidden\n{\n    #[\\Dagger\\Attribute\\DaggerFunction]\n    public function hidden(): string\n    {\n        return 'hidden';\n    }\n}\n",
@@ -574,7 +609,7 @@ type E2e {
     assertContains(contentsOf(withAncestor, typesPath), "\"Hidden\"", "the fixture class should be described without an exclusion")
     let ancestorExcluding = generatedEntrypoint(hidden.withNewFile("/" + manifest, "include = [\"..\", \"!src/Hidden.php\"]\n" + kept))
     assertNotContains(contentsOf(ancestorExcluding, typesPath), "\"Hidden\"", "an ancestor include should not bring back a file the module excludes")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept)) == false, "a module with another source keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept), "a module with another source", "its source is php")
     assert(usesEntrypoint(ws.withoutFile("/" + composer)), "a module without a composer.json should be eligible")
     let moduleClass = entrypointModulePath + "/src/EntrypointApp.php"
     let seeded = generatedEntrypoint(ws.withoutFile("/" + composer))
@@ -585,21 +620,21 @@ type E2e {
     let initialized = generatedEntrypoint(ws.withoutFile("/" + manifest))
     assert(contentsOf(initialized, composer) == composerText, "a new module should keep its composer.json")
     assert(exists(initialized, entrypointModulePath + "/entrypoint.php") == false, "a new module with a composer.json should get no starter files")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", "v1.1.0"))) == false, "a module on an engine later than the target keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", "v1.1.0")), "a module on an engine later than the target", "its engineVersion is later than v1.0.0-beta.27")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", target))), "a module on the target engine should be eligible")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + kept)) == false, "a module without default function caching keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + kept), "a module without default function caching", "it sets disableDefaultFunctionCaching")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = false\n" + kept)), "a module with default function caching should be eligible")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept + "\n[[clients]]\ngenerator = \"go\"\ndirectory = \"./client\"\n")) == false, "a module with pre-v2 clients keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + manifest, kept + "\n[[clients]]\ngenerator = \"go\"\ndirectory = \"./client\"\n"), "a module with pre-v2 clients", "it declares clients")
 
     let absoluteAutoload = composerText.replace("\"src/\"", "\"/opt/src/\"")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, absoluteAutoload)) == false, "an absolute autoload path keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + composer, absoluteAutoload), "an absolute autoload path", "Composer reads /opt/src/ outside the module")
     # The fixture sits six directories below the workspace root, so seven ".."
     # leave the workspace.
     let escapingAutoload = composerText.replace("\"src/\"", "\"../../../../../../../src/\"")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, escapingAutoload)) == false, "an autoload path outside the workspace keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + composer, escapingAutoload), "an autoload path outside the workspace", "Composer reads ../../../../../../../src/ outside the module")
     let insideAutoload = composerText.replace("\"src/\"", "\"./lib/../src/\"")
     assert(usesEntrypoint(ws.withNewFile("/" + composer, insideAutoload)), "a path that stays in the module should not count as outside")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, composerText.replace("\"platform\"", "\"vendor-dir\": \"deps\", \"platform\""))) == false, "a moved vendor-dir keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + composer, composerText.replace("\"platform\"", "\"vendor-dir\": \"deps\", \"platform\"")), "a moved vendor-dir", "composer.json moves vendor-dir to deps")
     assert(installsFromComposerFiles(ws), "the fixture should install from its Composer files alone")
     let disabled = composerText.replace("\"repositories\": [", "\"repositories\": {\"unused\": false, \"sdk\":").replace("}\n  ],", "}\n  },")
     assert(installsFromComposerFiles(ws.withNewFile("/" + composer, disabled)) == false, "a module with another repository should install after its source")
@@ -620,15 +655,10 @@ type E2e {
     assertNoChange(wired, "a module given the ./sdk repository")
 
     let entrypointTable = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
-    assert(
-      usesEntrypoint(migrated.withNewFile("/" + manifest, dependency + entrypointTable)) == false,
-      "an entrypoint with dependencies and a runtime reads as a runtime manifest",
-    )
+    let unknownClients = "a direct generation does not know the clients of its scope"
+    assertContains(directError(migrated.withNewFile("/" + manifest, dependency + entrypointTable)), unknownClients, "a direct generation of an entrypoint with dependencies and a runtime should be refused")
     let noRuntime = migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n" + entrypointTable)
-    let direct = phpSdk.mod(noRuntime, path: entrypointModulePath, findUp: false).generated.cwd rescue {
-      err: Error => err.message
-    }
-    assertContains(direct, "without a runtime", "a direct generation of an entrypoint with dependencies and no runtime should be refused")
+    assertContains(directError(noRuntime), unknownClients, "a direct generation of an entrypoint with dependencies and no runtime should be refused")
     assertRefused(noRuntime, "add each client, or remove the dependency:\n  dagger module client add ../dep", "an entrypoint with a dependency that no client provides")
 
     let local = ws.directory("/").asWorkspace
@@ -760,13 +790,11 @@ type E2e {
   }
 
   """
-  Whether the outside fixture keeps the runtime with its path repository ../lib
-  replaced by path.
+  The outside fixture with its path repository ../lib replaced by path.
   """
-  let keepsRuntimeWith(ws: Workspace!, path: String!): Boolean! {
+  let outsideWith(ws: Workspace!, path: String!): Workspace! {
     let composer = outsideModulePath + "/composer.json"
-    let changed = ws.withNewFile("/" + composer, contentsOf(ws, composer).replace("\"../lib\"", "\"" + path + "\""))
-    phpSdk.mod(changed, path: outsideModulePath, findUp: false).usesEntrypoint == false
+    ws.withNewFile("/" + composer, contentsOf(ws, composer).replace("\"../lib\"", "\"" + path + "\""))
   }
 
   """
@@ -775,7 +803,7 @@ type E2e {
   both, and an edit outside the module reaches the next call. An include
   directory outside the module reaches the call too. A path sources
   cannot return is refused. A file outside the module, a path with a ".." after
-  a name, and the workspace root keep the runtime.
+  a name, and the workspace root are refused.
   """
   pub entrypointOutsidePathsCheck(ws: Workspace!): Void @check {
     let outside = fixtureRoot + "/outside"
@@ -805,9 +833,14 @@ type E2e {
       generatedEntrypoint(including, path: outsideModulePath, name: "outside-app").changes(including).isEmpty,
       "a second generation with exclusions and Composer paths outside the module changed it",
     )
-    ["../lib/composer.json", "../lib/*.php", "../../../../../../"].each { pattern =>
+    [
+      ["../lib/composer.json", "it reads the file ../lib/composer.json outside the module"],
+      ["../lib/*.php", "outside the module is a glob"],
+      ["../../../../../../", "outside the module cannot be loaded from the workspace"],
+    ].each { case =>
+      let pattern = case[0] ?? ""
       let changed = ws.withNewFile("/" + manifest, "include = [\"" + pattern + "\"]\n" + contentsOf(ws, manifest))
-      assert(phpSdk.mod(changed, path: outsideModulePath, findUp: false).usesEntrypoint == false, "the include pattern " + pattern + " should keep the runtime")
+      assertMoveRefused(changed, "the include pattern " + pattern, case[1] ?? "", outsideModulePath)
       null
     }
     let withInclude = callClient
@@ -828,9 +861,9 @@ type E2e {
       assertContains(generationError(changed, path: outsideModulePath, name: "outside-app"), case[1] ?? "", (case[2] ?? "") + " should be refused")
       null
     }
-    assert(keepsRuntimeWith(ws, "../lib/composer.json"), "a Composer path to a file outside the module keeps the runtime")
-    assert(keepsRuntimeWith(ws, "../bridge/../lib"), "a path with a .. after a name keeps the runtime")
-    assert(keepsRuntimeWith(ws, "../../../../../../"), "a path to the workspace root keeps the runtime")
+    assertMoveRefused(outsideWith(ws, "../lib/composer.json"), "a Composer path to a file outside the module", "it reads the file ../lib/composer.json outside the module", outsideModulePath)
+    assertMoveRefused(outsideWith(ws, "../bridge/../lib"), "a path with a .. after a name", "Composer reads ../bridge/../lib outside the module", outsideModulePath)
+    assertMoveRefused(outsideWith(ws, "../../../../../../"), "a path to the workspace root", "Composer reads ../../../../../../ outside the module", outsideModulePath)
     let ignored = ws.withNewFile("/" + outside + "/lib/.gitignore", "*\n")
     assertContains(generationError(ignored, path: outsideModulePath, name: "outside-app"), "holds no file that .gitignore keeps", "a path that .gitignore empties should be refused")
     null
@@ -868,8 +901,8 @@ type E2e {
   on a second generation. A direct mod without the setting reads the pin
   dagger.toml records for the module's scope, at any equivalent path, and the
   setting wins over it. Records the engine refuses are refused. A
-  release later than the SDK's target is refused on both paths, and so is a pin
-  on a module that keeps the runtime.
+  release later than the SDK's target is refused on both paths, and so is a
+  pinned module on the PHP runtime that cannot move to the entrypoint.
   """
   pub targetVersionCheck(ws: Workspace!): Void @check {
     let pinned = "v1.0.0-beta.24"
@@ -907,7 +940,7 @@ type E2e {
     assert(phpSdk.mod(elsewhere, path: entrypointModulePath, findUp: false).rootPath == entrypointModulePath, "a pin recorded for another scope should not apply")
     let manifest = entrypointModulePath + "/dagger-module.toml"
     let kept = generationError(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + contentsOf(ws, manifest)), sdk)
-    assertContains(kept, "applies to the generated entrypoint only", "a pin on a module that keeps the runtime should be refused")
+    assertContains(kept, "cannot move to the generated entrypoint: it sets disableDefaultFunctionCaching", "a pinned module on the PHP runtime that cannot move should be refused")
   }
 
   """
