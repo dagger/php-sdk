@@ -11,6 +11,7 @@ type E2e {
   let rootingModulePath: String! = fixtureRoot + "/rooting/app"
   let entrypointModulePath: String! = fixtureRoot + "/entrypoint/app"
   let entrypointName: String! = "entrypoint-app"
+  let outsideModulePath: String! = fixtureRoot + "/outside/app"
   let clientTargetPath: String! = fixtureRoot + "/client-target/app"
   let clientMakerPath: String! = fixtureRoot + "/client-target/maker"
   let clientCallerPath: String! = fixtureRoot + "/client-target/caller"
@@ -50,8 +51,8 @@ type E2e {
   """
   The fixture module generated from a workspace, at the workspace root.
   """
-  let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = []): Workspace! {
-    sdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: clients).withWorkdir(".")
+  let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): Workspace! {
+    sdk.generateScope(ws.withWorkdir(path), isModule: true, name: name, clients: clients).withWorkdir(".")
   }
 
   """
@@ -73,8 +74,8 @@ type E2e {
   """
   The message generation fails with, or an empty string when it does not fail.
   """
-  let generationError(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = []): String! {
-    let cwd = generatedEntrypoint(ws, sdk, clients).cwd rescue {
+  let generationError(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): String! {
+    let cwd = generatedEntrypoint(ws, sdk, clients, path, name).cwd rescue {
       err: Error => "failed: " + err.message
     }
     if (cwd.hasPrefix("failed: ")) { cwd.trimPrefix("failed: ") } else { "" }
@@ -302,6 +303,15 @@ type E2e {
       err: Error => err.message
     }
     assertContains(programCut, "generates for " + target + " and has the client file-maker, which declares v1.0.0-beta.25", "a program's client module on the other side of the identifier-casing cut from the target should be refused")
+    let programComposer = "/" + programPath + "/composer.json"
+    let missing = generatedProgram(local.withNewFile(programComposer, "{\"repositories\": [{\"type\": \"path\", \"url\": \"../missing\"}]}\n"), [lister]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(missing, "reads ../missing through Composer, which holds no file in the workspace", "a program's missing Composer path outside it should be refused")
+    let bootstrap = local
+      .withNewFile("/" + fixtureRoot + "/client-target/bootstrap.php", "<?php\n")
+      .withNewFile(programComposer, "{\"autoload\": {\"files\": [\"../bootstrap.php\"]}}\n")
+    assertContains(contentsOf(generatedProgram(bootstrap, [lister]), programPath + "/composer.json"), "../bootstrap.php", "a program with an autoload file outside it should generate")
     null
   }
 
@@ -552,10 +562,12 @@ type E2e {
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = false\n" + kept)), "a module with default function caching should be eligible")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept + "\n[[clients]]\ngenerator = \"go\"\ndirectory = \"./client\"\n")) == false, "a module with pre-v2 clients keeps the runtime")
 
-    let externalRepository = composerText.replace("\"./sdk\"", "\"../sdk\"")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, externalRepository)) == false, "a Composer path outside the module keeps the runtime")
-    let externalAutoload = composerText.replace("\"src/\"", "\"../src/\"")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, externalAutoload)) == false, "an autoload path outside the module keeps the runtime")
+    let absoluteAutoload = composerText.replace("\"src/\"", "\"/opt/src/\"")
+    assert(usesEntrypoint(ws.withNewFile("/" + composer, absoluteAutoload)) == false, "an absolute autoload path keeps the runtime")
+    # The fixture sits six directories below the workspace root, so seven ".."
+    # leave the workspace.
+    let escapingAutoload = composerText.replace("\"src/\"", "\"../../../../../../../src/\"")
+    assert(usesEntrypoint(ws.withNewFile("/" + composer, escapingAutoload)) == false, "an autoload path outside the workspace keeps the runtime")
     let insideAutoload = composerText.replace("\"src/\"", "\"./lib/../src/\"")
     assert(usesEntrypoint(ws.withNewFile("/" + composer, insideAutoload)), "a path that stays in the module should not count as outside")
     assert(usesEntrypoint(ws.withNewFile("/" + composer, composerText.replace("\"platform\"", "\"vendor-dir\": \"deps\", \"platform\""))) == false, "a moved vendor-dir keeps the runtime")
@@ -578,9 +590,9 @@ type E2e {
       "an entrypoint with dependencies and no runtime",
     )
     assertRefused(
-      migrated.withNewFile("/" + composer, externalRepository),
+      migrated.withNewFile("/" + composer, absoluteAutoload),
       "cannot keep its generated entrypoint",
-      "a generated entrypoint with a Composer path outside the module",
+      "a generated entrypoint with an absolute Composer path",
     )
     assertRefused(
       migrated.withNewFile("/" + manifest, "include = [\"src\"]\nname = \"entrypoint-app\"\n" + entrypointTable),
@@ -632,6 +644,60 @@ type E2e {
         .withWorkdir(".")
         .directory("/" + layeringModulePath),
     )
+  }
+
+  """
+  Whether the outside fixture keeps the runtime with its path repository ../lib
+  replaced by path.
+  """
+  let keepsRuntimeWith(ws: Workspace!, path: String!): Boolean! {
+    let composer = outsideModulePath + "/composer.json"
+    let changed = ws.withNewFile("/" + composer, contentsOf(ws, composer).replace("\"../lib\"", "\"" + path + "\""))
+    phpSdk.mod(changed, path: outsideModulePath, findUp: false).usesEntrypoint == false
+  }
+
+  """
+  A module whose Composer path repository and autoload root sit outside its
+  directory moves to the entrypoint, whose sources returns them: a call reads
+  both, and an edit outside the module reaches the next call. A path sources
+  cannot return is refused. A file outside the module, a path with a ".." after
+  a name, and the workspace root keep the runtime.
+  """
+  pub entrypointOutsidePathsCheck(ws: Workspace!): Void @check {
+    let outside = fixtureRoot + "/outside"
+    let composer = outsideModulePath + "/composer.json"
+    let composerText = contentsOf(ws, composer)
+    let generated = generatedEntrypoint(ws, path: outsideModulePath, name: "outside-app")
+    assertNotContains(contentsOf(generated, outsideModulePath + "/dagger-module.toml"), "[runtime]", "the module should move to the entrypoint")
+    assertContains(contentsOf(generated, outsideModulePath + "/sdk/entrypoint/main.dang"), "workspace.directory(\"../shared/src\"", "sources should return the autoload root")
+
+    # The engine reads a local module's context from its Git root, which must
+    # hold the directories outside the module.
+    let local = callClient
+      .withDirectory("/work", generated.directory("/" + outside))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/app")
+    assertContains(call(local, ["call", "greet"]), "hello from lib!", "the call should read the path repository and the autoload root")
+    let edited = local.withExec(["sed", "-i", "s/hello from lib/hello again/", "/work/lib/src/Greeting.php"])
+    assertContains(call(edited, ["call", "greet"]), "hello again!", "an edit outside the module should reach the next call")
+
+    [
+      ["../missing", "holds no file in the workspace", "a path that holds no file"],
+      ["../linked", "goes through the symlink", "a path through a symlink"],
+    ].each { case =>
+      let changed = ws
+        .withDirectory("/" + outside, directory.withSymlink("lib", "linked"))
+        .withNewFile("/" + composer, composerText.replace("\"../lib\"", "\"" + (case[0] ?? "") + "\""))
+      assertContains(generationError(changed, path: outsideModulePath, name: "outside-app"), case[1] ?? "", (case[2] ?? "") + " should be refused")
+      null
+    }
+    assert(keepsRuntimeWith(ws, "../lib/composer.json"), "a Composer path to a file outside the module keeps the runtime")
+    assert(keepsRuntimeWith(ws, "../bridge/../lib"), "a path with a .. after a name keeps the runtime")
+    assert(keepsRuntimeWith(ws, "../../../../../../"), "a path to the workspace root keeps the runtime")
+    let ignored = ws.withNewFile("/" + outside + "/lib/.gitignore", "*\n")
+    assertContains(generationError(ignored, path: outsideModulePath, name: "outside-app"), "holds no file that .gitignore keeps", "a path that .gitignore empties should be refused")
+    null
   }
 
   """

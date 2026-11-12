@@ -158,7 +158,10 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 - an `engineVersion` later than `v1.0.0-beta.27`
 - a `source` other than the module directory
 - a `composer.json` without the `./sdk` path repository
-- a Composer path or autoload path outside the module
+- a Composer path or autoload path that is absolute, starts with `~`, holds a
+  variable, has a `..` after a directory name, leaves the workspace, or names the
+  workspace root
+- a Composer path or autoload path to a file outside the module
 - a Composer `vendor-dir` other than `vendor`
 - a runtime other than `php`
 
@@ -170,9 +173,22 @@ adds the starter template's files that the module does not have, as the engine's
 PHP runtime does. The `template` setting selects the template. A new module in a
 directory that already has a `composer.json` keeps it and gets no starter files.
 
-A module already on the generated entrypoint that gains a Composer path outside the
-module, or include rules, fails to generate. A generated entrypoint with
-`[[dependencies]]` and a `[runtime]` reads as a runtime manifest. With
+A Composer path repository or autoload directory outside the module, such as `../lib`,
+moves with the module. The generated entrypoint's `sources` returns each such
+directory, so the engine loads it with the module. The engine loads a local
+module's files from its Git repository, so the directory must be inside that
+repository. Run `dagger generate` again after you change those paths.
+
+Generation fails for such a path in the cases below. A failed generation applies
+none of its changes.
+
+- The path holds no file.
+- `.gitignore` drops every file of the path.
+- The path goes through a symlink.
+
+A module already on the generated entrypoint that gains include rules, or a
+Composer path that keeps a module on the runtime, fails to generate. A generated
+entrypoint with `[[dependencies]]` and a `[runtime]` reads as a runtime manifest. With
 `[[dependencies]]` and no `[runtime]`, generation and the engine refuse it, because
 an entrypoint has no dependency list.
 

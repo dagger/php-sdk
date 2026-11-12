@@ -10,6 +10,7 @@ use Dagger\Module\ValueCodec;
 use GraphQL\Exception\QueryError;
 
 const USAGE = 'usage: dagger-module generate --name <module> --client-version <version> --output <directory>'
+    . ' [--outside <JSON list of paths>]'
     . ' | call --output <file>';
 
 function fail(string $message, int $code = 1): never
@@ -61,6 +62,7 @@ try {
                 method_exists(Client::class, 'naming')
                     ? Dagger::getClientInstance()->naming($clientVersion)->module($name)->enumMemberNames(...)
                     : null,
+                json_decode($options['outside'] ?? '[]', true, flags: JSON_THROW_ON_ERROR),
             );
             break;
         case 'call':

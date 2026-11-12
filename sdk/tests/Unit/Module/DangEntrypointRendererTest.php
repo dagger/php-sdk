@@ -296,6 +296,17 @@ class DangEntrypointRendererTest extends TestCase
     }
 
     #[Test]
+    public function itReturnsTheOutsidePathsFromSources(): void
+    {
+        $main = DangEntrypointRenderer::renderMain('v1.0.0-beta.27', ['../lib']);
+
+        self::assertStringContainsString(
+            '.withDirectory(workspace.cwd + "/../lib", workspace.directory("../lib", exclude: ["**/.git", "vendor"], gitignore: true))',
+            $main,
+        );
+    }
+
+    #[Test]
     public function itWritesTheSameFilesTwice(): void
     {
         $output = sys_get_temp_dir() . '/' . uniqid('dagger-entrypoint-', true);
