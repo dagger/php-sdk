@@ -17,4 +17,10 @@ class OutsideApp
     {
         return Greeting::text() . Punctuation::MARK;
     }
+
+    #[DaggerFunction]
+    public function extra(): string
+    {
+        return trim((string) file_get_contents(dirname(__DIR__, 2) . '/extra/note.txt'));
+    }
 }

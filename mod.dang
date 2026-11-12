@@ -314,7 +314,9 @@ type Mod {
 
   """
   The module at its workspace path under /work, beside the Composer paths
-  outside it, so that Composer resolves them as it does in the workspace.
+  outside it, so that Composer resolves them as it does in the workspace. An
+  outside directory above the module holds the module too, and copies merge, so
+  the module's destination is cleared first: otherwise its excluded files stay.
   """
   let sourceWithSdk(sdk: Directory!): Container! {
     let root = "/work/" + rootPath
@@ -324,11 +326,16 @@ type Mod {
       .withWorkdir(root)
   }
 
+  """
+  The outside directories at their workspace paths under /work, without the
+  module's destination, which one above the module would fill unfiltered.
+  """
   let withOutsideDirectories: Container! {
-    outsideDirectories.reduce(phpContainer) { ctr, path =>
+    let outside = outsideDirectories.reduce(phpContainer) { ctr, path =>
       let rooted = workspacePath(path)
       ctr.withDirectory("/work/" + rooted, seeded.directory(rooted, exclude: ["**/.git", "vendor"], gitignore: true))
     }
+    outside.withoutDirectory("/work/" + rootPath)
   }
 
   """
@@ -438,7 +445,9 @@ type Mod {
   A module migrating from the runtime loses what only a runtime reads, except
   its include patterns, which every generation translates again. A module
   already on the entrypoint keeps a runtime it names for older engines, which
-  read such a manifest as a runtime manifest, include and all.
+  read such a manifest as a runtime manifest, include and all. From
+  v1.0.0-beta.26 a lone include replaces sources, so it also lists the outside
+  directories that sources would return, before the patterns.
 
   sdk-helpers v1.0.9 refuses to write include into a manifest without a
   runtime, so the patterns are prepended to the file it writes. Drop the
@@ -455,7 +464,9 @@ type Mod {
       .withWorkdir(".")
     if (namesRuntime or includePatterns.length == 0) { return written }
     let path = modulePath("dagger-module.toml")
-    written.withNewFile(path, "include = " + JSON.encode(includePatterns) + "\n" + written.directory("/", include: [path]).file(path).contents, permissions: 420)
+    let declared = includePatterns.map { pattern => normalized(pattern) }
+    let listed = outsideDirectories.filter { dir => declared.contains(dir) == false } + includePatterns
+    written.withNewFile(path, "include = " + JSON.encode(listed) + "\n" + written.directory("/", include: [path]).file(path).contents, permissions: 420)
   }
 
   """
@@ -646,7 +657,7 @@ type Mod {
     let cachingBlocker = if (cachingDisabled) { ["it sets disableDefaultFunctionCaching"] } else { [] :: [String!]! }
     let source = stringField(manifest, "source").trimPrefix("./").trimSuffix("/")
     let sourceBlocker = if (source == "" or source == ".") { [] :: [String!]! } else { ["its source is " + source] }
-    let others = declared + cachingBlocker + sourceBlocker + composerBlockers + includeBlockers
+    let others = declared + cachingBlocker + sourceBlocker + composerBlockers + includeBlockersFrom(0, false) + outsideFiles
     if (others.length > 0) { others } else { generatedBlockers }
   }
 
@@ -673,13 +684,21 @@ type Mod {
   }
 
   """
-  The include patterns the generated entrypoint cannot translate. A version 2
-  include alone replaces sources from v1.0.0-beta.26, so beside it sources would
-  not return the Composer paths outside the module.
+  The plain include patterns that leave the module. Each is an outside path,
+  which generation mounts and sources returns.
   """
-  let includeBlockers: [String!]! {
-    let besideComposer = if (includePatterns.length > 0 and outsidePaths.length > 0) { ["it declares " + (if (declares("include")) { "include" } else { "exclude" }) + " beside Composer paths outside the module"] } else { [] :: [String!]! }
-    includeBlockersFrom(0, false) + besideComposer
+  let includedOutside: [String!]! {
+    includePatterns.filter { pattern => pattern.hasPrefix("!") == false and leavesModule(pattern) and isGlob(pattern) == false }
+  }
+
+  let outsideFiles: [String!]! {
+    outsidePaths
+      .filter { path => entryExists(workspacePath(path), ExistsType.REGULAR_TYPE) }
+      .map { path => "it reads the file " + path + " outside the module" }
+  }
+
+  let isGlob(pattern: String!): Boolean! {
+    pattern.containsMatch("[*?\\[]")
   }
 
   """
@@ -709,20 +728,30 @@ type Mod {
   }
 
   """
-  The include blockers from the pattern at index i on. A build filter only drops
-  files, so a plain pattern after an exclusion, which could add some back, is
-  not translated.
+  The include patterns, from index i on, that the generated entrypoint cannot
+  translate. A build filter only drops files, so a plain pattern after an
+  exclusion, which could add some back, is not translated. An exclusion inside
+  the module never matches a directory disjoint from it, so such a directory is
+  the exception; an ancestor of the module, which the engine includes after the
+  exclusion, is not.
   """
   let includeBlockersFrom(i: Int!, excluding: Boolean!): [String!]! {
     if (i >= includePatterns.length) { return [] :: [String!]! }
     let pattern = includePatterns[i] ?? ""
     let negated = pattern.hasPrefix("!")
     let path = pattern.trimPrefix("!")
-    let blocker = if (leavesModule(path)) {
-      ["its include pattern " + pattern + (if (negated) { " excludes" } else { " reaches" }) + " outside the module"]
+    let outside = leavesModule(path)
+    let rooted = workspacePath(pattern)
+    let disjoint = outside and rooted != "" and rooted != rootPath and rootPath.hasPrefix(rooted + "/") == false
+    let blocker = if (outside and negated) {
+      ["its include pattern " + pattern + " excludes outside the module"]
+    } else if (outside and isGlob(pattern)) {
+      ["its include pattern " + pattern + " outside the module is a glob"]
+    } else if (outside and rooted == "") {
+      ["its include pattern " + pattern + " outside the module cannot be loaded from the workspace"]
     } else if (negated and normalized(path).hasPrefix("!")) {
       ["its include pattern " + pattern + " excludes a name that starts with !, which the build filter would read as an inclusion"]
-    } else if (negated == false and excluding) {
+    } else if (negated == false and disjoint == false and excluding) {
       ["its include pattern " + pattern + " includes again after an exclusion"]
     } else {
       [] :: [String!]!
@@ -738,13 +767,9 @@ type Mod {
       let external = composerPaths
         .filter { path => leavesModule(path) and workspacePath(path) == "" }
         .map { path => "Composer reads " + path + " outside the module" }
-      let files = outsidePaths
-        .filter { path => entryExists(workspacePath(path), ExistsType.REGULAR_TYPE) }
-        .map { path => "Composer reads the file " + path + " outside the module" }
       let vendorDir = if (composer.fields.contains("config")) { stringField(composer.field(["config"]), "vendor-dir") } else { "" }
       (if (usesSdkRepository) { [] :: [String!]! } else { ["composer.json has no path repository ./sdk"] }) +
         external +
-        files +
         (if (vendorDir == "" or vendorDir == "vendor") { [] :: [String!]! } else { ["composer.json moves vendor-dir to " + vendorDir] })
     }
   }
@@ -759,8 +784,8 @@ type Mod {
   the workspace can provide.
   """
   let outsidePaths: [String!]! {
-    if (fileExists("composer.json") == false) { return [] :: [String!]! }
-    composerPaths
+    let composer = if (fileExists("composer.json")) { composerPaths } else { [] :: [String!]! }
+    (composer + includedOutside)
       .filter { path => leavesModule(path) and workspacePath(path) != "" }
       .map { path => normalized(path) }
       .reduce([] :: [String!]!) { found, path => if (found.contains(path)) { found } else { found + [path] } }
@@ -818,7 +843,7 @@ type Mod {
   let checkOutsidePaths(sources: Boolean!): Void {
     outsidePaths.each { path =>
       let rooted = workspacePath(path)
-      let named = label + " reads " + path + " through Composer, which"
+      let named = label + " reads " + path + " outside it, which"
       if (sources) {
         let prefixes = rooted.split("/").reduce([] :: [String!]!) { found, part =>
           found + [if (found.length == 0) { part } else { (found[found.length - 1] ?? "") + "/" + part }]
