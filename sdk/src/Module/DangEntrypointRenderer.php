@@ -285,12 +285,15 @@ final readonly class DangEntrypointRenderer
     private const MAIN = <<<'DANG'
 
     type Entrypoint implements ModuleEntrypoint {
-      pub types(workspace: Workspace!): [TypeDef!]! {
+      pub sources(workspace: Workspace!): Directory! {
+        directory.withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git", "vendor"], gitignore: true))
+      }
+
+      pub types: [TypeDef!]! {
         ModuleTypes().all
       }
 
       pub call(
-        workspace: Workspace!,
         receiverType: String!,
         receiverValue: JSON,
         fnName: String!,
@@ -323,10 +326,8 @@ final readonly class DangEntrypointRenderer
         (result :: JSON!)
       }
 
-      # The module's own source, not the workspace the engine hands over: that is
-      # the caller's, which holds the module only when the module sits in it.
       let runtime: Container! {
-        PhpModuleBuild(source: currentModule.source).installed
+        PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed
       }
     }
 
