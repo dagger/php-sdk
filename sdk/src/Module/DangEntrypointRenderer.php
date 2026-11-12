@@ -185,7 +185,7 @@ final readonly class DangEntrypointRenderer
     /** @return list<string> */
     private static function function(DaggerFunction $function): array
     {
-        $lines = ['function(' . self::quote($function->name) . ', ' . self::type($function->returnType, refuseInterfaces: true) . ')'];
+        $lines = ['function(' . self::quote($function->name) . ', ' . self::type($function->returnType) . ')'];
 
         if ($function->description !== null && $function->description !== '') {
             $lines[] = '  .withDescription(' . self::quote($function->description) . ')';

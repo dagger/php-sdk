@@ -5,4 +5,9 @@ type Caller {
   pub describe: String! {
     geometry.describe(shapes.square(3)) + ";" + geometry.names([shapes.square(1), shapes.circle(2)])
   }
+
+  pub returned: String! {
+    let sorted = geometry.sorted([shapes.square(2), shapes.circle(1)])
+    geometry.larger(shapes.square(1), shapes.circle(1)).name + ";" + sorted.{{name}}.map { shape => shape.name }.join(",")
+  }
 }

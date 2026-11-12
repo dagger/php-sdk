@@ -6,6 +6,7 @@ namespace Dagger\Module;
 
 use Dagger\Attribute;
 use Dagger\Client;
+use Dagger\Client\IdAble;
 use Dagger\Client\QueryBuilder;
 use Dagger\Id;
 use Dagger\Json;
@@ -100,7 +101,7 @@ final readonly class ValueCodec
 
     public function encode(mixed $value, ListOfType|Type|null $type = null): string
     {
-        return $this->serialiser->serialise(self::withLists($value, $type));
+        return $this->serialiser->serialise(self::encodable($value, $type));
     }
 
     private function decodeScalar(mixed $value, Type $type): mixed
@@ -232,17 +233,33 @@ final readonly class ValueCodec
     }
 
     /**
-     * A list that array_filter or a keyed build has left with gaps would
-     * otherwise reach the engine as a JSON object.
+     * The value as the engine can read it once serialised. A list that
+     * array_filter or a keyed build has left with gaps would otherwise reach
+     * the engine as a JSON object. The engine reads an interface value only as
+     * the ID of an implementation it holds (dagger/dagger core/interface.go,
+     * ConvertFromSDKResult), so a plain PHP implementation is refused.
      */
-    private static function withLists(mixed $value, ListOfType|Type|null $type): mixed
+    private static function encodable(mixed $value, ListOfType|Type|null $type): mixed
     {
+        if (
+            $type instanceof Type
+            && $type->typeDefKind === TypeDefKind::INTERFACE_KIND
+            && $value !== null
+            && !$value instanceof IdAble
+        ) {
+            throw new InvalidArgumentException(sprintf(
+                '%s cannot be returned as the interface %s: return an implementation received as that interface',
+                get_debug_type($value),
+                $type->name,
+            ));
+        }
+
         if (!$type instanceof ListOfType || !is_array($value)) {
             return $value;
         }
 
         return array_map(
-            static fn($element) => self::withLists($element, $type->subtype),
+            static fn($element) => self::encodable($element, $type->subtype),
             array_values($value),
         );
     }

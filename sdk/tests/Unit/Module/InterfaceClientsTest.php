@@ -14,9 +14,11 @@ use Dagger\ModuleNaming;
 use Dagger\Tests\Unit\Module\Unsupported;
 use Dagger\ValueObject\DaggerFunction;
 use Dagger\ValueObject\DaggerObject;
+use Dagger\ValueObject\ListOfType;
 use Dagger\ValueObject\Type;
 use DaggerModule\Mode;
 use DaggerModule\Shape;
+use DaggerModule\Square;
 use Generator;
 use GraphQL\Exception\QueryError;
 use InvalidArgumentException;
@@ -85,14 +87,16 @@ class InterfaceClientsTest extends TestCase
 
     #[Test]
     #[RunInSeparateProcess]
-    public function itLoadsAnInterfaceArgumentByItsId(): void
+    public function itLoadsAnInterfaceArgumentByItsIdAndReturnsItsId(): void
     {
         $directory = sys_get_temp_dir() . '/' . uniqid('interfaces-');
         InterfaceClients::write(Description::fromDirectory(__DIR__ . '/Fixture'), $directory, $this->naming());
         require "$directory/Shape.php";
 
         $client = self::createStub(Client::class);
-        $client->method('queryLeaf')->willReturn('MainShape');
+        $client->method('queryLeaf')->willReturnCallback(
+            static fn($query, string $key) => $key === 'name' ? 'MainShape' : 'the-id',
+        );
         $client->method('loadObjectFromId')->willReturnCallback(
             static function (string $class, Id $id, ?string $typeName) use ($client) {
                 self::assertSame(['the-id', 'MainShape'], [(string) $id, $typeName]);
@@ -101,7 +105,30 @@ class InterfaceClientsTest extends TestCase
             },
         );
 
-        self::assertInstanceOf(Shape::class, ValueCodec::forClient($client)->decode('the-id', new Type(Shape::class)));
+        $codec = ValueCodec::forClient($client);
+
+        $shape = $codec->decode('the-id', new Type(Shape::class));
+        self::assertInstanceOf(Shape::class, $shape);
+        self::assertSame('"the-id"', $codec->encode($shape, new Type(Shape::class)));
+        self::assertSame('["the-id"]', $codec->encode([1 => $shape], new ListOfType(new Type(Shape::class))));
+    }
+
+    #[Test, DataProvider('providePlainImplementations')]
+    public function itRefusesToReturnAPlainImplementation(mixed $value, ListOfType|Type $type): void
+    {
+        self::expectException(InvalidArgumentException::class);
+        self::expectExceptionMessage('cannot be returned as the interface DaggerModule\\Shape');
+
+        ValueCodec::forClient(self::createStub(Client::class))->encode($value, $type);
+    }
+
+    /** @return Generator<string, array{mixed, ListOfType|Type}> */
+    public static function providePlainImplementations(): Generator
+    {
+        $square = new Square();
+
+        yield 'value' => [$square, new Type(Shape::class)];
+        yield 'list element' => [[$square], new ListOfType(new Type(Shape::class))];
     }
 
     #[Test]
