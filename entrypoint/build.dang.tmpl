@@ -16,7 +16,6 @@ type PhpModuleBuild {
       .withEnvVariable("COMPOSER_NO_INTERACTION", "1")
       .withEnvVariable("COMPOSER_ALLOW_SUPERUSER", "1")
       .withWorkdir("/src")
-      .withDirectory("/src", source, exclude: ["vendor"])
-      .withExec(["composer", "install"], disableDaggerInDagger: true)
+@COMPOSER_INSTALL@
   }
 }

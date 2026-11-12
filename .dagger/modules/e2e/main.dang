@@ -66,6 +66,10 @@ type E2e {
     phpSdk.mod(ws, path: entrypointModulePath, findUp: false).usesEntrypoint
   }
 
+  let installsFromComposerFiles(ws: Workspace!): Boolean! {
+    contentsOf(generatedEntrypoint(ws), entrypointModulePath + "/sdk/entrypoint/build.dang").contains("\"--no-autoloader\"")
+  }
+
   """
   The message generation fails with, or an empty string when it does not fail.
   """
@@ -555,6 +559,13 @@ type E2e {
     let insideAutoload = composerText.replace("\"src/\"", "\"./lib/../src/\"")
     assert(usesEntrypoint(ws.withNewFile("/" + composer, insideAutoload)), "a path that stays in the module should not count as outside")
     assert(usesEntrypoint(ws.withNewFile("/" + composer, composerText.replace("\"platform\"", "\"vendor-dir\": \"deps\", \"platform\""))) == false, "a moved vendor-dir keeps the runtime")
+    assert(installsFromComposerFiles(ws), "the fixture should install from its Composer files alone")
+    let disabled = composerText.replace("\"repositories\": [", "\"repositories\": {\"unused\": false, \"sdk\":").replace("}\n  ],", "}\n  },")
+    assert(installsFromComposerFiles(ws.withNewFile("/" + composer, disabled)) == false, "a module with another repository should install after its source")
+    let scripts = composerText.replace("\"config\"", "\"scripts\": {\"post-install-cmd\": \"true\"}, \"config\"")
+    assert(installsFromComposerFiles(ws.withNewFile("/" + composer, scripts)) == false, "a module with scripts should install after its source")
+    let escaped = composerText.replace("\"url\": \"./sdk\"", "\"url\": \"./sdk\", \"\\u006fptions\": {\"symlink\": false}")
+    assert(installsFromComposerFiles(ws.withNewFile("/" + composer, escaped)) == false, "a module with an escaped key should install after its source")
 
     let entrypointTable = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
     assert(

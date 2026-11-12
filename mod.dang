@@ -188,8 +188,22 @@ type Mod {
     checkSdkOwned
     checkClients
     let sdk = sdkTree
-    let describing = sourceWithSdk(sdk)
-      .withExec(composerCommand)
+    let installed = if (composerFilesFirst) {
+      let files = seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true)
+      let composer = phpContainer
+        .withNewFile("/src/composer.json", files.file("composer.json").contents)
+        .withDirectory("/src/sdk", sdk)
+        .withWorkdir("/src")
+      let locked = if (files.exists("composer.lock")) { composer.withNewFile("/src/composer.lock", files.file("composer.lock").contents) } else { composer }
+      let updated = locked.withExec(composerCommand + ["--no-autoloader"])
+      # The module's lock would overwrite the one Composer just wrote.
+      updated
+        .withDirectory("/src", files, exclude: ["composer.lock"])
+        .withExec(["composer", "dump-autoload"])
+    } else {
+      sourceWithSdk(sdk).withExec(composerCommand)
+    }
+    let describing = installed
       .withEnvVariable("DAGGER_CLIENT_VERSION", targetEngineVersion)
       .withExec(
         ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint"],
@@ -334,6 +348,24 @@ type Mod {
       .withNewFile(".gitattributes", "** linguist-generated\n")
   }
 
+  """
+  Whether Composer installs from the Composer files alone. Their contents do not
+  carry the source's cache key, so an edit of the source leaves the install
+  cached. Scripts, plugins, patches, repository options and repositories other
+  than ./sdk could read the source, so their mere mention keeps the install
+  after the source, as does a JSON unicode escape, which could spell one of them.
+  The entrypoint is generated with the choice: a module that adds one of them
+  later must be generated again.
+  """
+  let composerFilesFirst: Boolean! {
+    if (fileExists("composer.json") == false) {
+      return true
+    }
+    let text = contentsOf("composer.json")
+    let readers = ["\"scripts\"", "\"allow-plugins\"", "\"patches", "\"options\"", "\\u"].filter { key => text.contains(key) }
+    usesSdkRepository and repositories.length == 1 and readers.length == 0
+  }
+
   let composerCommand: [String!]! {
     if (fileExists("composer.lock")) {
       ["composer", "update", "--with-all-dependencies", "--minimal-changes", "dagger/dagger"]
@@ -346,6 +378,7 @@ type Mod {
     currentModule.source.file("entrypoint/build.dang.tmpl").contents
       .replaceMatches("@PHP_IMAGE@", phpImage)
       .replaceMatches("@COMPOSER_IMAGE@", composerImage)
+      .replace("@COMPOSER_INSTALL@\n", currentModule.source.file("entrypoint/" + (if (composerFilesFirst) { "install-composer-files" } else { "install-source" }) + ".dang.tmpl").contents)
   }
 
   """
@@ -602,9 +635,12 @@ type Mod {
     }
   }
 
-  let repositoryPaths: [String!]! {
+  let repositories: [String!]! {
     let composer = parsedJson(contentsOf("composer.json"))
-    let repositories = if (composer.fields.contains("repositories")) { rawEntries(composer.field(["repositories"])) } else { [] :: [String!]! }
+    if (composer.fields.contains("repositories")) { rawEntries(composer.field(["repositories"])) } else { [] :: [String!]! }
+  }
+
+  let repositoryPaths: [String!]! {
     repositories
       .filter { repository => stringField(parsedJson(repository), "type") == "path" }
       .map { repository => stringField(parsedJson(repository), "url") }
