@@ -152,7 +152,8 @@ entrypoint, and the engine runs a function through it, including its
 A module moves to the entrypoint when it is self-contained. A module that has any
 of the following keeps the runtime in its manifest and gets no `dang.toml`:
 
-- `[[dependencies]]`
+- `[[dependencies]]`, in `dagger call php-sdk mod ... generate` only, which does
+  not know the scope's clients
 - `blueprint` or `toolchains`
 - an exclusion outside the module, an `include` pattern outside the module that
   is a glob, or a plain `include` pattern after an exclusion, unless it names a
@@ -225,12 +226,53 @@ load the excluded files. The generated build still leaves them out, and `sources
 returns the outside directories, so a call sees the same files on every supported
 engine.
 
+A module with `[[dependencies]]` moves to the entrypoint when each dependency is a
+client of its scope; see [Module clients](#module-clients). In dagger/dagger
+v1.0.0-beta.27, `dagger module migrate` records a module's dependencies as the
+clients of its scope (`core/workspace/migrate.go`, `MigratedModuleClients`).
+Generation drops `[[dependencies]]` from the manifest and generates each dependency
+as a client.
+
+A dependency matches a client by its source only, whatever the dependency's name,
+so a dependency named by an alias matches the client of its source. A local path
+is relative to the module. A Git ref must name the client's repository and
+subpath. The comparison ignores the scheme, the user, a port, a trailing `/` and
+the case of the host, so `https://`, `ssh://` and `git@host:path` spellings
+match. A `.git` suffix ends the repository: `host/org.git/repo` is the subpath
+`repo` of `host/org`. A version can hold a `/`, as `@feature/foo` does. A ref with a `#`
+selector does not match. A dependency with a `pin` must have the client's pin. A
+dependency with only a version must have the client's version or pin. A
+dependency written as a source string, as in a legacy `dagger.json`, is read as
+that source.
+
+Generation refuses a dependency that no client provides. The message lists one
+`dagger module client add <source>` command per such dependency, to run from the
+module directory. The command names the dependency's pin in place of its
+version when the dependency has one.
+
+The runtime generated a dependency's types into namespace `Dagger`, next to core, and
+its constructor on `dag()`. A client generates them into `Dagger\Clients\<Name>`, and
+its constructor is a static method of `Dagger\Clients\<Name>\Client`. Generation does
+not change the module's code, and does not detect a call through the runtime's API:
+such a call fails when it runs. Update the module's code when it moves:
+
+```php
+// On the runtime:
+$report = dag()->lister()->lint($source);
+
+// On the entrypoint:
+use Dagger\Clients\Lister\Client as Lister;
+
+$report = Lister::lister()->lint($source);
+```
+
 A module already on the generated entrypoint fails to generate when it gains a
 pattern that keeps a module on the runtime. It also fails when it gains such a
-Composer path. A generated
-entrypoint with `[[dependencies]]` and a `[runtime]` reads as a runtime manifest. With
-`[[dependencies]]` and no `[runtime]`, generation and the engine refuse it, because
-an entrypoint has no dependency list.
+Composer path. In `dagger call php-sdk mod ... generate`, a generated entrypoint
+with `[[dependencies]]` and a `[runtime]` reads as a runtime manifest. That
+generation refuses a generated entrypoint with `[[dependencies]]` and no
+`[runtime]`, because it does not know the clients that provide them. dagger/dagger
+v1.0.0-beta.27 accepts that manifest (`core/modules/config_fat_manifest.go`).
 
 Generating the entrypoint fails for an enum whose cases the engine would give one name,
 such as `Low` and `LOW`, because the engine would replace one with the other without
@@ -427,8 +469,7 @@ Generation fails, and applies none of its changes, in these cases:
 - A client module adds a field to a core type other than `Query`.
 
 `dagger call php-sdk mod ... generate` does not know a module's clients, and
-refuses a module that has some: run `dagger generate`. A module's existing
-dependencies are kept as they are.
+refuses a module that has some: run `dagger generate`.
 
 ## Migrate a workspace
 

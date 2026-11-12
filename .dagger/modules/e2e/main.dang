@@ -316,8 +316,8 @@ type E2e {
   }
 
   """
-  A module calls two clients through dagger call, from its own code: a core
-  Directory that one client returns reaches the other. A program installed with
+  A module calls its two dependencies as clients through dagger call, from its
+  own code: a core Directory that one client returns reaches the other. A program installed with
   Composer does the same in a nested session, whose local addresses resolve in
   this module's tree.
   """
@@ -329,6 +329,7 @@ type E2e {
     let scope = tree.asWorkspace(cwd: "caller")
     let lister = scope.moduleSource("/lister")
     let generated = phpSdk.generateScope(scope, isModule: true, name: "caller", clients: [lister, scope.moduleSource("/maker")])
+    assertNotContains(generated.file("/caller/dagger-module.toml").contents, "[[dependencies]]", "the caller's dependencies should become clients")
     let app = callClient
       .withDirectory("/work", generated.directory("/"))
       .withWorkdir("/work")
@@ -622,11 +623,72 @@ type E2e {
       usesEntrypoint(migrated.withNewFile("/" + manifest, dependency + entrypointTable)) == false,
       "an entrypoint with dependencies and a runtime reads as a runtime manifest",
     )
-    assertRefused(
-      migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n" + entrypointTable),
-      "without a runtime",
-      "an entrypoint with dependencies and no runtime",
+    let noRuntime = migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n" + entrypointTable)
+    let direct = phpSdk.mod(noRuntime, path: entrypointModulePath, findUp: false).generated.cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(direct, "without a runtime", "a direct generation of an entrypoint with dependencies and no runtime should be refused")
+    assertRefused(noRuntime, "add each client, or remove the dependency:\n  dagger module client add ../dep", "an entrypoint with a dependency that no client provides")
+
+    let local = ws.directory("/").asWorkspace
+    let lister = local.moduleSource("/" + clientTargetPath)
+    let dependsOn = kept + "\n[[dependencies]]\n"
+    let listerSource = "source = \"../../client-target/app\"\n"
+    let named = local.withNewFile("/" + manifest, dependsOn + "name = \"file-lister\"\n" + listerSource)
+    let fromDependency = generatedEntrypoint(named, clients: [lister])
+    let dropped = contentsOf(fromDependency, manifest)
+    assertContains(dropped, "source = \"./sdk/entrypoint\"", "a module whose dependencies are clients should move to the entrypoint")
+    assertNotContains(dropped, "[[dependencies]]", "a dependency should become a client")
+    assert(exists(fromDependency, entrypointModulePath + "/sdk/generated/Clients/FileLister/Client.php"), "the dependency's client should be generated")
+    let aliased = generatedEntrypoint(local.withNewFile("/" + manifest, dependsOn + "name = \"Lister\"\nsource = \"../../client-target/app/\"\n"), clients: [lister])
+    assertNotContains(contentsOf(aliased, manifest), "[[dependencies]]", "a dependency named by an alias should match its client by source")
+    let unnamed = generatedEntrypoint(local.withNewFile("/" + manifest, dependsOn + listerSource), clients: [lister])
+    assertNotContains(contentsOf(unnamed, manifest), "[[dependencies]]", "a dependency without a name should match its client by source")
+    let keepsRuntime = generatedEntrypoint(migrated.withNewFile("/" + manifest, dependsOn + "name = \"file-lister\"\n" + listerSource + entrypointTable), clients: [lister])
+    assertNotContains(contentsOf(keepsRuntime, manifest), "[[dependencies]]", "an entrypoint that names a runtime should lose the dependencies its clients provide")
+    assertContains(contentsOf(keepsRuntime, manifest), "[runtime]", "an entrypoint that names a runtime should keep it")
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, dependsOn + "name = \"file-lister\"\nsource = \"../../client-target/maker\"\n"), clients: [lister]),
+      "add each client, or remove the dependency:\n  dagger module client add ../../client-target/maker",
+      "a client with the dependency's name and another source should not provide it",
     )
+    assertContains(generationError(named), "matching by source and Git version or pin, not by name", "a dependency that no client provides should be refused")
+    let helpers = moduleSource("github.com/dagger/sdk-helpers@v1.0.9")
+    let helpersSource = dependsOn + "source = \"github.com/dagger/sdk-helpers@v1.0.9\"\n"
+    assertContains(generationError(local.withNewFile("/" + manifest, helpersSource.replace("v1.0.9", "v1.0.8")), clients: [helpers]), "  dagger module client add github.com/dagger/sdk-helpers@v1.0.8", "a Git dependency at another version than its client should be refused")
+    let helpersPin = "daffbc01a1b3f3df7b1c417a7d2c83cd06d1bd33"
+    [
+      [helpersSource, "a Git dependency equal to its client"],
+      [dependsOn + "source = \"https://github.com/dagger/sdk-helpers.git@v1.0.9\"\n", "an https:// ref ending in .git"],
+      [dependsOn + "source = \"git@github.com:dagger/sdk-helpers@v1.0.9\"\n", "an SSH ref"],
+      [dependsOn + "source = \"ssh://git@github.com:22/dagger/sdk-helpers@v1.0.9\"\n", "an ssh:// ref with a port"],
+      [dependsOn + "source = \"GitHub.com/dagger/sdk-helpers@v1.0.9\"\npin = \"" + helpersPin + "\"\n", "a ref with another host case at its client's pin"],
+    ].each { case =>
+      let provided = generatedEntrypoint(local.withNewFile("/" + manifest, case[0] ?? ""), clients: [helpers])
+      assertNotContains(contentsOf(provided, manifest), "[[dependencies]]", (case[1] ?? "") + " should be provided by its client")
+      assert(exists(provided, entrypointModulePath + "/sdk/generated/Clients/SdkHelpers/Client.php"), (case[1] ?? "") + " should get its client generated")
+      null
+    }
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"github.com/dagger.git/sdk-helpers@v1.0.9\"\n"), clients: [helpers]),
+      "  dagger module client add github.com/dagger.git/sdk-helpers@v1.0.9",
+      "a subdirectory of another repository should not be provided by a client of the same path",
+    )
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, helpersSource + "pin = \"0000000000000000000000000000000000000000\"\n"), clients: [helpers]),
+      "  dagger module client add github.com/dagger/sdk-helpers@0000000000000000000000000000000000000000",
+      "a Git dependency pinned to another commit than its client should be refused, with its pin",
+    )
+    assertContains(generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"github.com/dagger/sdk-helpers#v1.0.9\"\n"), clients: [helpers]), "no client of its scope", "a ref with a selector should be refused")
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, dependsOn + "name = \"sdk-helpers\"\nsource = \"../expected\"\n"), clients: [helpers]),
+      "  dagger module client add ../expected",
+      "a local dependency should not be provided by a Git client of the same name",
+    )
+    let legacyStrings = ws
+      .withoutFile("/" + manifest)
+      .withNewFile("/" + legacyJson, "{\"name\": \"entrypoint-app\", \"engineVersion\": \"v1.0.0-0\", \"sdk\": {\"source\": \"php\"}, \"dependencies\": [\"github.com/acme/dep@v1\"]}\n")
+    assertContains(generationError(legacyStrings), "  dagger module client add github.com/acme/dep@v1", "a dependency written as a source string should be read as its source")
     assertRefused(
       migrated.withNewFile("/" + composer, absoluteAutoload),
       "cannot keep its generated entrypoint",
