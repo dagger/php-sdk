@@ -26,7 +26,7 @@ use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
-use function Dagger\dag;
+use function Dagger\core;
 
 #[AsCommand('dagger:entrypoint')]
 class EntrypointCommand extends Command
@@ -37,7 +37,7 @@ class EntrypointCommand extends Command
         InputInterface $input,
         OutputInterface $output
     ): int {
-        $functionCall = dag()->currentFunctionCall();
+        $functionCall = core()->currentFunctionCall();
 
         try {
             return $functionCall->parentName() === '' ?
@@ -52,7 +52,7 @@ class EntrypointCommand extends Command
 
     private function registerModule(Dagger\FunctionCall $functionCall): int
     {
-        $daggerModule = dag()->module();
+        $daggerModule = core()->module();
 
         $src = (new FindsSrcDirectory())();
         $daggerObjects = (new FindsDaggerObjects())($src);
@@ -73,7 +73,7 @@ class EntrypointCommand extends Command
     private function formatObjectTypeDef(
         ValueObject\DaggerObject $daggerObject,
     ): TypeDef {
-        $result = dag()->typeDef()->withObject(
+        $result = core()->typeDef()->withObject(
             NormalizesClassName::trimLeadingNamespace($daggerObject->name),
             $daggerObject->description,
         );
@@ -87,7 +87,7 @@ class EntrypointCommand extends Command
         }
 
         foreach ($daggerObject->daggerFunctions as $daggerFunction) {
-            $func = dag()->function(
+            $func = core()->function(
                 $daggerFunction->name,
                 $this->getTypeDef($daggerFunction->returnType),
             );
@@ -134,7 +134,7 @@ class EntrypointCommand extends Command
             $daggerObject->requiresConstruction()
             && ! $daggerObject->hasConstructor()
         ) {
-            $noopConstructor = dag()->function('', $this
+            $noopConstructor = core()->function('', $this
                 ->getTypeDef(new Type($daggerObject->name)));
 
             $result = $result
@@ -147,7 +147,7 @@ class EntrypointCommand extends Command
     private function formatEnumTypeDef(
         ValueObject\DaggerEnum $daggerEnum,
     ): TypeDef {
-        $result = dag()->typeDef()->withEnum(
+        $result = core()->typeDef()->withEnum(
             NormalizesClassName::trimLeadingNamespace($daggerEnum->name),
             $daggerEnum->description,
         );
@@ -213,7 +213,7 @@ class EntrypointCommand extends Command
 
     private function getTypeDef(ListOfType|Type $type): TypeDef
     {
-        $typeDef = dag()->typeDef();
+        $typeDef = core()->typeDef();
 
         switch ($type->typeDefKind) {
             case TypeDefKind::FLOAT_KIND:
@@ -282,7 +282,7 @@ class EntrypointCommand extends Command
         );
 
         $result = [];
-        $decodesValue = new DecodesValue(dag());
+        $decodesValue = new DecodesValue(core());
         foreach ($daggerFunction->arguments as $parameter) {
             $type = $parameter->type;
 
@@ -311,7 +311,7 @@ class EntrypointCommand extends Command
                 ],
                 [
                     new Serialisation\AbstractScalarHandler(),
-                    new Serialisation\IdableHandler(dag()),
+                    new Serialisation\IdableHandler(core()),
                     new Serialisation\EnumHandler(),
                 ],
             );

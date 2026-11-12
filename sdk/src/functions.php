@@ -11,8 +11,3 @@ function core(): Client
 {
     return Dagger::getClientInstance();
 }
-
-function dag(): Client
-{
-    return Dagger::getClientInstance();
-}

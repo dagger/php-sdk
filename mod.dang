@@ -49,6 +49,17 @@ type Mod {
   """
   let clients: [ModuleSource!]
 
+  """
+  The globalClient setting, null when unset.
+  """
+  let globalClientSetting: Boolean
+
+  """
+  Whether generation wrote the manifest just before, for a new module: it names
+  the PHP runtime, but the module's code is the template's.
+  """
+  let createdManifest: Boolean!
+
   let phpImage: String! = "php:8.4-cli-alpine@sha256:ef24d42ed7297dc8c9a6672988594c5f18702a434b3af48a3128fed8d2569746"
   let composerImage: String! = "composer/composer:2.8-bin@sha256:c735b6a52ea118693178babc601984dbbbd07f1d31ec87eaa881173622b467ed"
   let entrypointPath: String! = "sdk/entrypoint"
@@ -477,13 +488,19 @@ type Mod {
   the core schema is.
   """
   let sdkTree: Directory! {
-    let core = phpContainer
+    let library = phpContainer
       .withDirectory(
         "/sdk",
         currentModule.source.directory("sdk"),
         include: ["src/**", "scripts/**", "bin/**", "composer.json", "composer.lock", "LICENSE"],
       )
       .withWorkdir("/sdk")
+    let autoloaded = if (writesGlobalClient) {
+      library.withExec(["php", "-r", "$c = json_decode(file_get_contents('composer.json'), true, flags: JSON_THROW_ON_ERROR); $c['autoload']['files'][] = 'src/dag.php'; file_put_contents('composer.json', json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . \"\\n\");"])
+    } else {
+      library.withoutFile("src/dag.php")
+    }
+    let core = autoloaded
       .withExec(["composer", "install", "--no-dev"])
       .withMountedFile("/schema.json", clientSchema)
       .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
@@ -499,6 +516,20 @@ type Mod {
       .withoutDirectory("scripts")
       .withoutFile("composer.lock")
       .withNewFile(".gitattributes", "** linguist-generated\n")
+  }
+
+  """
+  Whether generation writes the global client, dag(): the globalClient setting,
+  or, unset, whether the code may call it. Code the built-in PHP runtime ran
+  does, unless generation just wrote its manifest. So does code whose sdk/ has
+  dag(): in dag.php, or in functions.php as releases before the setting wrote it.
+  """
+  let writesGlobalClient: Boolean! {
+    let onRuntime = createdManifest == false and hasEntrypoint == false and runtimeSource == "php"
+    # Migration shim: releases before globalClient defined dag() in functions.php.
+    # Drop it once no module keeps an sdk/ from those releases.
+    let earlier = fileExists("sdk/src/functions.php") and contentsOf("sdk/src/functions.php").contains("function dag(")
+    globalClientSetting ?? (onRuntime or fileExists("sdk/src/dag.php") or earlier)
   }
 
   """

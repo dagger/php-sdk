@@ -29,6 +29,13 @@ type PhpSdk {
   pub targetVersion: String! = ""
 
   """
+  Whether a module gets the global client, Dagger\dag(). Unset, a module moved
+  from the built-in PHP runtime, whose code calls dag(), gets it, as does one
+  whose sdk/ already has it; a new module does not.
+  """
+  pub globalClient: Boolean
+
+  """
   Find the PHP client root containing the workspace cwd: the directory of the
   nearest composer.json, relative to the workspace root. A module's or a PHP
   program's vendored SDK carries its own composer.json under sdk/, so the
@@ -76,7 +83,8 @@ type PhpSdk {
       # whose cwd is not the scope.
       let rooted = ws.withWorkdir(".")
       let target = targetRelease("module \"" + name + "\"")
-      let initialized = if (hasModuleConfig(ws, scope)) {
+      let created = hasModuleConfig(ws, scope) == false
+      let initialized = if (created == false) {
         rooted
       } else {
         sdkHelpers.moduleManifest
@@ -85,7 +93,7 @@ type PhpSdk {
           .generate(rooted.withWorkdir(scope), legacyJson: false)
           .withWorkdir(".")
       }
-      targetedMod(scope, initialized, name, "module \"" + name + "\"", clients: clients).generated.withWorkdir(scope)
+      targetedMod(scope, initialized, name, "module \"" + name + "\"", clients: clients, created: created).generated.withWorkdir(scope)
     }
   }
 
@@ -131,7 +139,7 @@ type PhpSdk {
     null
   }
 
-  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion, laterEngine: Boolean! = false, clients: [ModuleSource!] = null): Mod! {
+  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion, laterEngine: Boolean! = false, clients: [ModuleSource!] = null, created: Boolean! = false, globalSetting: Boolean = globalClient): Mod! {
     Mod(
       rootPath: path,
       ws: ws,
@@ -141,6 +149,8 @@ type PhpSdk {
       templateName: selectedTemplate,
       declaresLaterEngine: laterEngine,
       clients: clients,
+      globalClientSetting: globalSetting,
+      createdManifest: created,
     )
   }
 
@@ -166,9 +176,9 @@ type PhpSdk {
   A client module that declares a release on the other side of the identifier-casing
   cut from that release is refused too; see checkClientReleases.
   """
-  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion, clients: [ModuleSource!] = null): Mod! {
+  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, setting: String! = targetVersion, clients: [ModuleSource!] = null, created: Boolean! = false, globalSetting: Boolean = globalClient): Mod! {
     let target = targetRelease(subject, setting)
-    let mod = modAt(path, ws, name, target, declaresLaterEngine(ws, path), clients)
+    let mod = modAt(path, ws, name, target, declaresLaterEngine(ws, path), clients, created, globalSetting)
     checkClientReleases(subject, target, clients ?? ([] :: [ModuleSource!]!))
     mod
   }
@@ -339,22 +349,24 @@ type PhpSdk {
       normalizePath(path)
     }
 
-    let setting = if (targetVersion == "") { recordedTargetVersion(ws, modPath) } else { targetVersion }
-    targetedMod(modPath, ws, "", "module at " + modPath, setting)
+    let setting = if (targetVersion == "") { recordedSetting(ws, modPath, "targetVersion").trimPrefix("\"").trimSuffix("\"") } else { targetVersion }
+    let recordedGlobal = if (globalClient == null) { recordedSetting(ws, modPath, "globalClient") } else { "" }
+    let globalSetting = if (recordedGlobal == "") { globalClient } else { recordedGlobal == "true" }
+    targetedMod(modPath, ws, "", "module at " + modPath, setting, globalSetting: globalSetting)
   }
 
   """
-  The targetVersion the workspace config records for the scope at a
+  The JSON value of a setting the workspace config records for the scope at a
   workspace-root-relative path, or empty. The engine passes a scope's settings
   only when it generates the scope itself, so a direct mod reads them from the
   config file, not its includes, as the engine does. WorkspaceSDK.scopeSetting
   answers this only in views from v1.0.0-beta.26, and this module's
   engineVersion is v1.0.0-beta.17. Unlike python-sdk, a targetVersion passed to
-  the SDK wins over the record. Only targetVersion is checked for conflicting or
-  case-colliding records; the engine validates the rest of the config. Follows
+  the SDK wins over the record. Only the setting read is checked for conflicting
+  or case-colliding records; the engine validates the rest of the config. Follows
   dagger/dagger v1.0.0-beta.27 core/workspace.
   """
-  let recordedTargetVersion(ws: Workspace!, scope: String!): String! {
+  let recordedSetting(ws: Workspace!, scope: String!, setting: String!): String! {
     let rooted = ws.withWorkdir(".")
     let configFile = rooted.configFile
     if (configFile == "") { return "" }
@@ -378,10 +390,10 @@ type PhpSdk {
       .filter { key => scopeKeyPath(configDir, key) == target and scopes.field([key]).fields.contains("settings") }
       .reduce([] :: [String!]!) { found, key =>
         let settings = scopes.field([key, "settings"])
-        found + settings.fields.filter { name => name.toLower == "targetversion" }.map { name => name + " = " + settings.field([name]).asString }
+        found + settings.fields.filter { name => name.toLower == setting.toLower }.map { name => name + " = " + toString(settings.field([name]).contents).trimSpace }
       }
     if (recorded.filter { pin => pin != (recorded[0] ?? "") }.length > 0) {
-      raise "SDK \"" + sdkName + "\" records several targetVersion settings for the scope " + target + ": " + recorded.join(", ") + "; keep one in dagger.toml"
+      raise "SDK \"" + sdkName + "\" records several " + setting + " settings for the scope " + target + ": " + recorded.join(", ") + "; keep one in dagger.toml"
     }
     (recorded[0] ?? "").split(" = ").dropFirst(1).join(" = ")
   }
