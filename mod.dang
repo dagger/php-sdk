@@ -343,7 +343,7 @@ type Mod {
   The sdk/ that generation writes, without the dang.toml withConfig adds.
   """
   let generatedSdk: Directory! {
-    sdkTree.withDirectory("entrypoint", describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang))
+    describing.directory("sdk").withDirectory("entrypoint", describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang))
   }
 
   """

@@ -16,6 +16,7 @@ type E2e {
   let clientMakerPath: String! = fixtureRoot + "/client-target/maker"
   let clientCallerPath: String! = fixtureRoot + "/client-target/caller"
   let programPath: String! = fixtureRoot + "/client-target/program"
+  let interfacesPath: String! = fixtureRoot + "/interfaces"
   let target: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
 
@@ -833,6 +834,21 @@ type E2e {
     let ignored = ws.withNewFile("/" + outside + "/lib/.gitignore", "*\n")
     assertContains(generationError(ignored, path: outsideModulePath, name: "outside-app"), "holds no file that .gitignore keeps", "a path that .gitignore empties should be refused")
     null
+  }
+
+  """
+  A Dang module passes objects of a third module to a PHP function that takes
+  the PHP module's interface, alone and in a list, through dagger call.
+  """
+  pub entrypointInterfaceCallCheck(ws: Workspace!): Void @check {
+    let generated = phpSdk.generateScope(ws.withWorkdir(interfacesPath + "/geometry"), isModule: true, name: "geometry", clients: [])
+    let app = callClient
+      .withDirectory("/work", generated.withWorkdir(".").directory("/" + interfacesPath))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/caller")
+    let described = call(app, ["call", "describe"])
+    assert(described.trimSpace == "square 18;square,circle", "the PHP module should query the caller's objects through its interface: " + described)
   }
 
   """

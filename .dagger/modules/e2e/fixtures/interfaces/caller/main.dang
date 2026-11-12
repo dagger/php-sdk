@@ -1,0 +1,8 @@
+"""
+Passes objects of another module to a PHP module that takes its interface.
+"""
+type Caller {
+  pub describe: String! {
+    geometry.describe(shapes.square(3)) + ";" + geometry.names([shapes.square(1), shapes.circle(2)])
+  }
+}

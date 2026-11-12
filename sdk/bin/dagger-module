@@ -6,6 +6,7 @@ use Dagger\Dagger;
 use Dagger\Module\CallDispatcher;
 use Dagger\Module\DangEntrypointRenderer;
 use Dagger\Module\Description;
+use Dagger\Module\InterfaceClients;
 use Dagger\Module\ValueCodec;
 use GraphQL\Exception\QueryError;
 
@@ -54,17 +55,20 @@ try {
             $clientVersion = required($options, 'client-version');
             // The client is generated against the target's view, so it has
             // Query.naming exactly where the engine serves it there.
+            $description = Description::fromDirectory(getcwd() . '/src');
+            $naming = method_exists(Client::class, 'naming')
+                ? Dagger::getClientInstance()->naming($clientVersion)->module($name)
+                : null;
             DangEntrypointRenderer::write(
-                Description::fromDirectory(getcwd() . '/src'),
+                $description,
                 $name,
                 $clientVersion,
                 required($options, 'output'),
-                method_exists(Client::class, 'naming')
-                    ? Dagger::getClientInstance()->naming($clientVersion)->module($name)->enumMemberNames(...)
-                    : null,
+                $naming === null ? null : $naming->enumMemberNames(...),
                 json_decode($options['outside'] ?? '[]', true, flags: JSON_THROW_ON_ERROR),
                 json_decode($options['exclude'] ?? '[]', true, flags: JSON_THROW_ON_ERROR),
             );
+            InterfaceClients::write($description, getcwd() . '/sdk/generated/ModuleInterfaces', $naming);
             break;
         case 'call':
             $output = required($options, 'output');

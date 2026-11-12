@@ -6,6 +6,7 @@ namespace Dagger\Module;
 
 use Dagger\Attribute;
 use Dagger\Client;
+use Dagger\Id;
 use Dagger\Json;
 use Dagger\Service\Serialisation;
 use Dagger\TypeDefKind;
@@ -25,6 +26,7 @@ final readonly class ValueCodec
 {
     public function __construct(
         private Serialisation\Serialiser $serialiser,
+        private Client $client,
     ) {
     }
 
@@ -41,7 +43,7 @@ final readonly class ValueCodec
                 new Serialisation\IdableHandler($client),
                 new Serialisation\EnumHandler(),
             ],
-        ));
+        ), $client);
     }
 
     public function decode(mixed $value, ListOfType|Type $type): mixed
@@ -78,9 +80,11 @@ final readonly class ValueCodec
             TypeDefKind::OBJECT_KIND => $type->isIdable()
                 ? $this->serialiser->deserialise(json_encode($value, JSON_THROW_ON_ERROR), $type->name)
                 : $this->decodeObject($value, $type->name),
-            TypeDefKind::INTERFACE_KIND => throw new InvalidArgumentException(
-                sprintf('Currently cannot decode custom interfaces: %s', $type->name),
-            ),
+            TypeDefKind::INTERFACE_KIND => $type->isDaggerInterface()
+                ? $this->decodeInterface($value, $type)
+                : throw new InvalidArgumentException(
+                    sprintf('Currently cannot decode custom interfaces: %s', $type->name),
+                ),
             default => throw new InvalidArgumentException("Cannot decode $type->name"),
         };
 
@@ -110,6 +114,20 @@ final readonly class ValueCodec
             ),
             $type->name,
         );
+    }
+
+    private function decodeInterface(mixed $id, Type $type): object
+    {
+        if (!is_string($id)) {
+            throw self::unexpected($id, $type);
+        }
+
+        $class = InterfaceClients::className($type->name);
+        if (!class_exists($class)) {
+            throw new InvalidArgumentException("No class $class exists; run dagger generate");
+        }
+
+        return $this->client->loadObjectFromId($class, new Id($id), constant("$class::GRAPHQL_TYPE"));
     }
 
     /**
