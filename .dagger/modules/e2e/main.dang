@@ -191,6 +191,12 @@ type E2e {
     assertContains(portedNaming, "Copyright (c) 2018 Ma_124", "the generated SDK should keep the strcase copyright")
     assertContains(portedNaming, "Permission is hereby granted", "the generated SDK should keep the strcase permission notice")
     assertContains(generated.file("sdk/LICENSE").contents, "Apache License", "the generated SDK should keep its own license")
+    let moduleClass = generated.file("src/Layering.php").contents
+    assertContains(moduleClass, "core()", "the default template should call the core API through core()")
+    assertNotContains(moduleClass, "dag()", "the default template should not use the global client")
+    assert(phpSdk.templates.{{name}}.map { t => t.name }.join(",") == "default,empty", "the templates should be default and empty")
+    let empty = phpSdk(template: "empty").generateScope(root.asWorkspace(cwd: layeringModulePath), isModule: true, name: "layering", clients: [])
+    assertNotContains(empty.file("src/Layering.php").contents, "DaggerFunction", "the empty template should have no function")
     null
   }
 
@@ -619,7 +625,6 @@ type E2e {
     assertContains(generationError(ws.withoutFile("/" + composer), phpSdk(template: "missing")), "unknown init template: missing", "a module seeded from an unknown template")
     let initialized = generatedEntrypoint(ws.withoutFile("/" + manifest))
     assert(contentsOf(initialized, composer) == composerText, "a new module should keep its composer.json")
-    assert(exists(initialized, entrypointModulePath + "/entrypoint.php") == false, "a new module with a composer.json should get no starter files")
     assertMoveRefused(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", "v1.1.0")), "a module on an engine later than the target", "its engineVersion is later than v1.0.0-beta.27")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", target))), "a module on the target engine should be eligible")
     assertMoveRefused(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + kept), "a module without default function caching", "it sets disableDefaultFunctionCaching")
@@ -955,15 +960,18 @@ type E2e {
   }
 
   """
-  The default new-module path: a module from the minimal template has neither
-  fields nor a constructor of its own, and calls the engine from its function.
+  The default new-module path: a module from the default template takes the
+  workspace in its constructor, keeps its source and base image, and builds a
+  container from them through core().
   """
   let assertTemplateCalls(module: Directory!): Void {
     let templated = callClient
       .withDirectory("/work/app", module)
       .withWorkdir("/work/app")
       .withExec(["git", "init", "--quiet"])
-    assertContains(call(templated, ["call", "container-echo", "--string-arg", "from the template", "stdout"]), "from the template", "a main object without a constructor of its own should answer")
+    let printed = call(templated, ["call", "container", "with-exec", "--args", "cat,/etc/alpine-release,composer.json", "stdout"])
+    assertContains(printed, "3.24.", "the container should start from the default base image")
+    assertContains(printed, "daggermodule/layering", "the container should hold the workspace source")
     null
   }
 

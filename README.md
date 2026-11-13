@@ -66,11 +66,19 @@ The engine records the module scope in `dagger.toml` and calls `generateScope`,
 which seeds the starter template, writes `dagger-module.toml`, the SDK and the
 entrypoint in one step. Files already in the module directory are kept.
 
-`--template` picks a starter template under `templates/` (`minimal` is the
-default):
+`--template` is `default` (a `container` function over the workspace) or
+`empty`:
 
 ```sh
-dagger module init php --name my-module --template minimal
+dagger module init php --name my-module --template empty
+```
+
+A module calls the core API from `Dagger\core()`:
+
+```php
+use function Dagger\core;
+
+return core()->container()->from('alpine:3.24');
 ```
 
 ## Function roles
@@ -94,22 +102,22 @@ Inside a `#[DaggerObject]` class, with the attributes from `Dagger\Attribute`:
 #[DaggerFunction, Check]
 public function lint(): Container
 {
-    return dag()->container()->from('php:8.4-cli')->withExec(['php', '--version']);
+    return core()->container()->from('php:8.4-cli')->withExec(['php', '--version']);
 }
 
 #[DaggerFunction, Generate]
 public function generateFile(): Changeset
 {
-    return dag()
+    return core()
         ->directory()
         ->withNewFile('generated.txt', 'generated')
-        ->changes(dag()->directory());
+        ->changes(core()->directory());
 }
 
 #[DaggerFunction, Up]
 public function serve(): Service
 {
-    return dag()->container()->from('alpine:latest')->asService();
+    return core()->container()->from('alpine:latest')->asService();
 }
 
 #[DaggerFunction, Agent]
@@ -465,7 +473,7 @@ use Dagger\Clients\Lister\Client as Lister;
 $report = Lister::lister()->lint($source);
 ```
 
-A client shares the session of `Dagger\Dagger::getClientInstance()`, so core
+A client shares the session of `Dagger\core()`, so core
 objects such as a `Dagger\Directory` pass into its calls. A Git client is bound to
 its address and to the commit the engine resolved it to; the checks here run
 local clients only. Commit `sdk/` with its clients.
