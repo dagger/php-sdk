@@ -154,8 +154,9 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 
 - `[[dependencies]]`
 - `blueprint` or `toolchains`
-- an `include` or `exclude` pattern outside the module, a plain `include` pattern
-  after an exclusion, or `include` beside Composer paths outside the module
+- an exclusion outside the module, an `include` pattern outside the module that
+  is a glob, or a plain `include` pattern after an exclusion, unless it names a
+  directory beside the module rather than one above it
 - an exclusion of a file generation writes, such as `sdk/` or `composer.json`
 - an exclusion of a name that starts with `!`
 - `disableDefaultFunctionCaching = true` or a `[[clients]]` table
@@ -165,7 +166,9 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 - a Composer path or autoload path that is absolute, starts with `~`, holds a
   variable, has a `..` after a directory name, leaves the workspace, or names the
   workspace root
-- a Composer path or autoload path to a file outside the module
+- a Composer path, autoload path or `include` path to a file outside the module
+- an `include` path outside the module that is absolute, holds a variable, leaves
+  the workspace, or names the workspace root
 - a Composer `vendor-dir` other than `vendor`
 - a runtime other than `php`
 
@@ -198,10 +201,18 @@ patterns in `include`, with each `exclude` entry as a `!` pattern. Every generat
 reads them again, so editing `include` and running `dagger generate` updates the
 build.
 
+A plain `include` directory outside the module, such as `../data`, moves with the
+module, as a Composer path outside it does. From `v1.0.0-beta.26` an `include`
+alone replaces `sources`. When the manifest declares `include`, generation
+therefore also lists the Composer directories outside the module in it.
+Generation does not remove an entry it added. After you remove such a Composer
+path, remove its entry from `include` too.
+
 From `v1.0.0-beta.26` the engine applies `include` to the module's files.
 `v1.0.0-beta.18` to `v1.0.0-beta.25` ignore `include` in a version 2 manifest and
-load the excluded files. The generated build still leaves them out, so a call sees
-the same files on every supported engine.
+load the excluded files. The generated build still leaves them out, and `sources`
+returns the outside directories, so a call sees the same files on every supported
+engine.
 
 A module already on the generated entrypoint fails to generate when it gains a
 pattern that keeps a module on the runtime. It also fails when it gains such a

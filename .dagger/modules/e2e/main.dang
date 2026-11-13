@@ -307,7 +307,7 @@ type E2e {
     let missing = generatedProgram(local.withNewFile(programComposer, "{\"repositories\": [{\"type\": \"path\", \"url\": \"../missing\"}]}\n"), [lister]).cwd rescue {
       err: Error => err.message
     }
-    assertContains(missing, "reads ../missing through Composer, which holds no file in the workspace", "a program's missing Composer path outside it should be refused")
+    assertContains(missing, "reads ../missing outside it, which holds no file in the workspace", "a program's missing Composer path outside it should be refused")
     let bootstrap = local
       .withNewFile("/" + fixtureRoot + "/client-target/bootstrap.php", "<?php\n")
       .withNewFile(programComposer, "{\"autoload\": {\"files\": [\"../bootstrap.php\"]}}\n")
@@ -562,10 +562,22 @@ type E2e {
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!./!notes\"]\n" + kept)) == false, "an exclusion that normalizes to a name that starts with ! keeps the runtime")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "exclude = [\"sdk/entrypoint/types.dang\"]\n" + kept)) == false, "an exclusion of a generated entrypoint file keeps the runtime")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "exclude = [\"sdk/src\"]\n" + kept)) == false, "an exclusion of the SDK library keeps the runtime")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!notes\", \"..\"]\n" + kept)) == false, "an ancestor of the module after an exclusion keeps the runtime")
+    let hidden = ws.withNewFile(
+      "/" + entrypointModulePath + "/src/Hidden.php",
+      "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nclass Hidden\n{\n    #[\\Dagger\\Attribute\\DaggerFunction]\n    public function hidden(): string\n    {\n        return 'hidden';\n    }\n}\n",
+    )
+    let typesPath = entrypointModulePath + "/sdk/entrypoint/types.dang"
+    let withAncestor = generatedEntrypoint(hidden.withNewFile("/" + manifest, "include = [\"..\"]\n" + kept))
+    assertContains(contentsOf(withAncestor, typesPath), "\"Hidden\"", "the fixture class should be described without an exclusion")
+    let ancestorExcluding = generatedEntrypoint(hidden.withNewFile("/" + manifest, "include = [\"..\", \"!src/Hidden.php\"]\n" + kept))
+    assertNotContains(contentsOf(ancestorExcluding, typesPath), "\"Hidden\"", "an ancestor include should not bring back a file the module excludes")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept)) == false, "a module with another source keeps the runtime")
     assert(usesEntrypoint(ws.withoutFile("/" + composer)), "a module without a composer.json should be eligible")
     let moduleClass = entrypointModulePath + "/src/EntrypointApp.php"
     let seeded = generatedEntrypoint(ws.withoutFile("/" + composer))
+    let seededOutside = generatedEntrypoint(ws.withoutFile("/" + composer).withNewFile("/" + manifest, "include = [\"../../outside/extra\"]\n" + kept))
+    assertContains(contentsOf(seededOutside, entrypointModulePath + "/sdk/entrypoint/main.dang"), "workspace.directory(\"../../outside/extra\"", "a seeded module should return its include directory outside it")
     assert(contentsOf(seeded, moduleClass) == contentsOf(ws, moduleClass), "the seeded template should keep the module's files")
     assertContains(generationError(ws.withoutFile("/" + composer), phpSdk(template: "missing")), "unknown init template: missing", "a module seeded from an unknown template")
     let initialized = generatedEntrypoint(ws.withoutFile("/" + manifest))
@@ -686,7 +698,8 @@ type E2e {
   """
   A module whose Composer path repository and autoload root sit outside its
   directory moves to the entrypoint, whose sources returns them: a call reads
-  both, and an edit outside the module reaches the next call. A path sources
+  both, and an edit outside the module reaches the next call. An include
+  directory outside the module reaches the call too. A path sources
   cannot return is refused. A file outside the module, a path with a ".." after
   a name, and the workspace root keep the runtime.
   """
@@ -708,6 +721,28 @@ type E2e {
     assertContains(call(local, ["call", "greet"]), "hello from lib!", "the call should read the path repository and the autoload root")
     let edited = local.withExec(["sed", "-i", "s/hello from lib/hello again/", "/work/lib/src/Greeting.php"])
     assertContains(call(edited, ["call", "greet"]), "hello again!", "an edit outside the module should reach the next call")
+
+    # From v1.0.0-beta.26 a lone include replaces sources, so the call only
+    # passes if the manifest's include also lists the Composer paths.
+    let manifest = outsideModulePath + "/dagger-module.toml"
+    let including = generatedEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!notes\", \"../extra\"]\n" + contentsOf(ws, manifest)), path: outsideModulePath, name: "outside-app")
+    assertContains(contentsOf(including, manifest), "\"../lib\"", "include should list the Composer paths outside the module")
+    assert(
+      generatedEntrypoint(including, path: outsideModulePath, name: "outside-app").changes(including).isEmpty,
+      "a second generation with exclusions and Composer paths outside the module changed it",
+    )
+    ["../lib/composer.json", "../lib/*.php", "../../../../../../"].each { pattern =>
+      let changed = ws.withNewFile("/" + manifest, "include = [\"" + pattern + "\"]\n" + contentsOf(ws, manifest))
+      assert(phpSdk.mod(changed, path: outsideModulePath, findUp: false).usesEntrypoint == false, "the include pattern " + pattern + " should keep the runtime")
+      null
+    }
+    let withInclude = callClient
+      .withDirectory("/work", including.directory("/" + outside))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/app")
+    assertContains(call(withInclude, ["call", "greet"]), "hello from lib!", "a module with include should still read its Composer paths")
+    assertContains(call(withInclude, ["call", "extra"]), "extra note", "an include directory outside the module should reach the call")
 
     [
       ["../missing", "holds no file in the workspace", "a path that holds no file"],
