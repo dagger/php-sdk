@@ -300,7 +300,8 @@ only `bool`, `int`, `float`, `string`, `void` and non-null core objects such as
 `Directory`.
 
 A module function cannot return a module interface. An object field cannot hold a
-module interface. A module interface needs a target from `v1.0.0-beta.26`.
+module interface. A module interface needs a target from `v1.0.0-beta.26`. A module
+loaded under another name, as a dependency alias, cannot take its own interfaces.
 
 ### Move a module to the entrypoint
 
