@@ -45,12 +45,6 @@ class CodegenCommand extends Command
             null
         );
         $this->addOption(
-            'core',
-            null,
-            InputOption::VALUE_NONE,
-            'Generate the types and fields no module contributes, the default',
-        );
-        $this->addOption(
             'client',
             null,
             InputOption::VALUE_REQUIRED,
@@ -74,9 +68,6 @@ class CodegenCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
         $module = $input->getOption('client');
-        if ($input->getOption('core') && $module !== null) {
-            throw new InvalidArgumentException('--core and --client exclude each other');
-        }
         $address = $input->getOption('address');
         if (($module === null) !== ($address === null) || ($module === null && $input->getOption('pin') !== null)) {
             throw new InvalidArgumentException('--client needs --address, and --address and --pin need --client');

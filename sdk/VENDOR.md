@@ -13,7 +13,7 @@ Local changes to the vendored files:
   fails. The upstream tree commits `generated/`, so it never needs either.
 - `src/Codegen/CodeWriter.php`, `src/Codegen/Codegen.php`,
   `src/Codegen/Introspection/NewCodegenVisitor.php` and `src/Command/CodegenCommand.php`
-  partition the schema by `@sourceMap(module:)`. `--core`, the default, generates what
+  partition the schema by `@sourceMap(module:)`. Without `--client`, it generates what
   no module contributes. `--client <module>` generates what the module contributes into
   `generated/Clients/<Name>/`, in namespace `Dagger\Clients\<Name>`.
 - `src/Client/AbstractClient.php` gains `serve`, which sends `serveModule` once per

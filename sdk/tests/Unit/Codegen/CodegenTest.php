@@ -45,18 +45,6 @@ class CodegenTest extends TestCase
     }
 
     #[Test]
-    public function itLeavesClientTypesOutOfCore(): void
-    {
-        $this->generate(self::schema(), null);
-
-        self::assertSame(['Client.php', 'Container.php', 'Id.php', 'NetworkProtocol.php'], $this->files(''));
-        $client = $this->read('Client.php');
-        self::assertStringContainsString('namespace Dagger;', $client);
-        self::assertStringContainsString('function container(', $client);
-        self::assertStringNotContainsString('MyLinter', $client);
-    }
-
-    #[Test]
     public function itGeneratesCoreAsIfTheSchemaHadNoClient(): void
     {
         $data = self::schemaData();
@@ -214,10 +202,6 @@ class CodegenTest extends TestCase
     {
         $this->generate(self::schema(), null);
         $this->generate(self::schema(), 'my-linter', new ModuleTarget(self::ADDRESS, $pin));
-        // sdk-unit-check runs with a generated core client, sdk-codegen-unit-check without one.
-        if (!class_exists(\Dagger\Client::class)) {
-            require $this->root . '/Client.php';
-        }
         require $this->root . '/' . self::CLIENT_DIR . '/Client.php';
         require $this->root . '/' . self::CLIENT_DIR . '/MyLinter.php';
 

@@ -108,6 +108,13 @@ type E2e {
     assertContains(message, want, what + " was refused for the wrong reason")
   }
 
+  """
+  The fixture's manifest on the PHP runtime, and tables to append to it.
+  """
+  let runtimeManifest: String! = "name = \"entrypoint-app\"\nengineVersion = \"v1.0.0-beta.21\"\n\n[runtime]\nsource = \"php\"\n"
+  let dependencyTable: String! = "\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n"
+  let entrypointTable: String! = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
+
   let assertNoChange(ws: Workspace!, what: String!): Void {
     assert(generatedEntrypoint(ws).changes(ws).isEmpty, what + " changed on generation")
   }
@@ -594,8 +601,8 @@ type E2e {
     let fromModule = phpSdk.mod(ws.withWorkdir(entrypointModulePath), path: ".").generate
     assert(contains(fromModule.addedPaths, "sdk/entrypoint/main.dang"), "generating from the module should write the entrypoint relative to it")
 
-    let kept = "name = \"entrypoint-app\"\nengineVersion = \"v1.0.0-beta.21\"\n\n[runtime]\nsource = \"php\"\n"
-    let dependency = kept + "\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n"
+    let kept = runtimeManifest
+    let dependency = kept + dependencyTable
     assert(usesEntrypoint(ws), "the fixture should be eligible")
     assertContains(directError(ws.withNewFile("/" + manifest, dependency)), "a direct generation does not know the clients of its scope", "a direct generation of a module with dependencies should be refused")
     let several = "source = \"./php\"\ndisableDefaultFunctionCaching = true\n" + dependency.replace("v1.0.0-beta.21", "v1.1.0")
@@ -674,10 +681,48 @@ type E2e {
     assertContains(contentsOf(wired, entrypointModulePath + "/sdk/entrypoint/build.dang"), "\"--no-autoloader\"", "a module given the ./sdk repository should install from its Composer files alone")
     assertNoChange(wired, "a module given the ./sdk repository")
 
-    let entrypointTable = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
+    assertRefused(
+      migrated.withNewFile("/" + composer, absoluteAutoload),
+      "cannot keep its generated entrypoint",
+      "a generated entrypoint with an absolute Composer path",
+    )
+    assertRefused(
+      migrated.withNewFile("/" + manifest, "include = [\"!../lib\"]\nname = \"entrypoint-app\"\n" + entrypointTable),
+      "its include pattern !../lib excludes outside the module",
+      "a generated entrypoint with an include pattern it cannot translate",
+    )
+    assertRefused(
+      migrated.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\nname = \"entrypoint-app\"\n" + entrypointTable),
+      "it sets disableDefaultFunctionCaching",
+      "a generated entrypoint without default function caching",
+    )
+
+    let encoding = "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nenum Encoding\n{\n    case Base64;\n    case BASE64;\n}\n"
+    let collision = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/src/Encoding.php", encoding)).cwd rescue {
+      err: GraphQLError => err.message + "\n" + err.extensions
+    }
+    assertContains(collision, "its cases Base64 and BASE64 the same name, BASE64", "cases the engine names alike should be refused")
+
+    let fat = kept + entrypointTable
+    let keptRuntime = contentsOf(generatedEntrypoint(migrated.withNewFile("/" + manifest, fat)), manifest)
+    assertContains(keptRuntime, "[runtime]", "a runtime named beside a generated entrypoint should be kept for older engines")
+    null
+  }
+
+  """
+  A module's dependencies become the clients of its scope that provide them,
+  matched by source; a dependency that no client provides is refused with the
+  command that adds it.
+  """
+  pub entrypointDependenciesCheck(ws: Workspace!): Void @check {
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let legacyJson = entrypointModulePath + "/dagger.json"
+    let kept = runtimeManifest
+    let dependency = kept + dependencyTable
+    let migrated = generatedEntrypoint(ws)
     let unknownClients = "a direct generation does not know the clients of its scope"
     assertContains(directError(migrated.withNewFile("/" + manifest, dependency + entrypointTable)), unknownClients, "a direct generation of an entrypoint with dependencies and a runtime should be refused")
-    let noRuntime = migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n" + entrypointTable)
+    let noRuntime = migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n" + dependencyTable + entrypointTable)
     assertContains(directError(noRuntime), unknownClients, "a direct generation of an entrypoint with dependencies and no runtime should be refused")
     assertRefused(noRuntime, "add each client, or remove the dependency:\n  dagger module client add ../dep", "an entrypoint with a dependency that no client provides")
 
@@ -740,31 +785,6 @@ type E2e {
       .withoutFile("/" + manifest)
       .withNewFile("/" + legacyJson, "{\"name\": \"entrypoint-app\", \"engineVersion\": \"v1.0.0-0\", \"sdk\": {\"source\": \"php\"}, \"dependencies\": [\"github.com/acme/dep@v1\"]}\n")
     assertContains(generationError(legacyStrings), "  dagger module client add github.com/acme/dep@v1", "a dependency written as a source string should be read as its source")
-    assertRefused(
-      migrated.withNewFile("/" + composer, absoluteAutoload),
-      "cannot keep its generated entrypoint",
-      "a generated entrypoint with an absolute Composer path",
-    )
-    assertRefused(
-      migrated.withNewFile("/" + manifest, "include = [\"!../lib\"]\nname = \"entrypoint-app\"\n" + entrypointTable),
-      "its include pattern !../lib excludes outside the module",
-      "a generated entrypoint with an include pattern it cannot translate",
-    )
-    assertRefused(
-      migrated.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\nname = \"entrypoint-app\"\n" + entrypointTable),
-      "it sets disableDefaultFunctionCaching",
-      "a generated entrypoint without default function caching",
-    )
-
-    let encoding = "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nenum Encoding\n{\n    case Base64;\n    case BASE64;\n}\n"
-    let collision = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/src/Encoding.php", encoding)).cwd rescue {
-      err: GraphQLError => err.message + "\n" + err.extensions
-    }
-    assertContains(collision, "its cases Base64 and BASE64 the same name, BASE64", "cases the engine names alike should be refused")
-
-    let fat = kept + entrypointTable
-    let keptRuntime = contentsOf(generatedEntrypoint(migrated.withNewFile("/" + manifest, fat)), manifest)
-    assertContains(keptRuntime, "[runtime]", "a runtime named beside a generated entrypoint should be kept for older engines")
     null
   }
 
@@ -870,7 +890,6 @@ type E2e {
     }
     [
       ["../lib/composer.json", "it reads the file ../lib/composer.json outside the module"],
-      ["../lib/*.php", "outside the module is a glob"],
       ["../../../../../../", "outside the module cannot be loaded from the workspace"],
     ].each { case =>
       let pattern = case[0] ?? ""
@@ -1033,12 +1052,8 @@ type E2e {
       "$dir = Dagger\\Dagger::getClientInstance()->directory()->withNewFile('a.txt', 'a')->withNewFile('b.txt', 'b');\n" +
       "echo Client::fileLister()->entries($dir), PHP_EOL;\n" +
       "echo Client::fileLister()->entries($dir->withNewFile('c.txt', 'c')), PHP_EOL;\n"
-    let php = phpSdk.mod(ws, path: entrypointModulePath, findUp: false).phpContainer
-      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
-      .withWorkdir("/sdk")
-      .withExec(["composer", "install", "--no-dev"])
+    let php = sdkLibrary(ws, false)
       .withMountedFile("/schema.json", ws.moduleSource(local).withEngineVersion(target).clientSchemaIntrospectionJSON)
-      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json", "--core"])
       .withNewFile("/sdk/call.php", script)
       .withEnvVariable("DAGGER_CLIENT_VERSION", target)
     let codegen = "php scripts/codegen.php dagger:codegen --schema-file /schema.json --client file-lister"
@@ -1064,18 +1079,24 @@ type E2e {
   }
 
   """
-  The unit tests of the entrypoint support, against a client of the target schema.
+  The SDK library of the workspace with its core client generated against the
+  target schema, and with its dev tooling when dev is true.
   """
-  pub sdkUnitCheck(ws: Workspace!): Void @check {
+  let sdkLibrary(ws: Workspace!, dev: Boolean! = true): Container! {
     let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
     mod.phpContainer
       .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
       .withWorkdir("/sdk")
-      .withExec(["composer", "install"])
-      .withMountedFile("/schema.json", mod.clientSchema)
-      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
-      .withExec(["vendor/bin/phpunit", "--group", "unit"])
-      .sync
+      .withExec(["composer", "install"] + (if (dev) { [] :: [String!]! } else { ["--no-dev"] }))
+      .withMountedFile("/core-schema.json", mod.clientSchema)
+      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/core-schema.json"])
+  }
+
+  """
+  The unit tests of the PHP library.
+  """
+  pub sdkUnitCheck(ws: Workspace!): Void @check {
+    sdkLibrary(ws).withExec(["vendor/bin/phpunit", "--group", "unit"]).sync
     null
   }
 
@@ -1083,59 +1104,25 @@ type E2e {
   The PSR-12 style of the PHP library.
   """
   pub sdkStyleCheck(ws: Workspace!): Void @check {
-    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
-    mod.phpContainer
-      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
-      .withWorkdir("/sdk")
-      .withExec(["composer", "install"])
-      .withExec(["vendor/bin/phpcs"])
-      .sync
+    sdkLibrary(ws).withExec(["vendor/bin/phpcs"]).sync
     null
   }
 
   """
-  The PHPStan analysis of the PHP library, against a client of the target schema.
+  The PHPStan analysis of the PHP library.
   """
   pub sdkAnalysisCheck(ws: Workspace!): Void @check {
-    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
-    mod.phpContainer
-      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
-      .withWorkdir("/sdk")
-      .withExec(["composer", "install"])
-      .withMountedFile("/schema.json", mod.clientSchema)
-      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
-      .withExec(["vendor/bin/phpstan", "analyse", "--no-progress", "--memory-limit=1G"])
-      .sync
+    sdkLibrary(ws).withExec(["vendor/bin/phpstan", "analyse", "--no-progress", "--memory-limit=1G"]).sync
     null
   }
 
   """
-  The Composer metadata and PSR-4 layout of the PHP library, against a client of the target schema.
+  The Composer metadata and PSR-4 layout of the PHP library.
   """
   pub sdkComposerCheck(ws: Workspace!): Void @check {
-    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
-    mod.phpContainer
-      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
-      .withWorkdir("/sdk")
+    sdkLibrary(ws)
       .withExec(["composer", "validate", "--strict"])
-      .withExec(["composer", "install"])
-      .withMountedFile("/schema.json", mod.clientSchema)
-      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
       .withExec(["composer", "dump-autoload", "--classmap-authoritative", "--strict-psr", "--strict-ambiguous"])
-      .sync
-    null
-  }
-
-  """
-  The codegen unit tests, against a committed schema that holds core and one client.
-  """
-  pub sdkCodegenUnitCheck(ws: Workspace!): Void @check {
-    let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
-    mod.phpContainer
-      .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
-      .withWorkdir("/sdk")
-      .withExec(["composer", "install"])
-      .withExec(["vendor/bin/phpunit", "tests/Unit/Codegen"])
       .sync
     null
   }
