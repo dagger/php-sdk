@@ -285,19 +285,6 @@ type Mod {
     let sdk = sdkTree
     let installed = if (wiresSdkRepository) {
       withSdkPackage(sourceWithSdk(sdk))
-    } else if (composerFilesFirst) {
-      let root = "/work/" + rootPath
-      let files = seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"] + excludedPatterns, gitignore: true)
-      let composer = withOutsideDirectories
-        .withNewFile(root + "/composer.json", files.file("composer.json").contents)
-        .withDirectory(root + "/sdk", sdk)
-        .withWorkdir(root)
-      let locked = if (files.exists("composer.lock")) { composer.withNewFile(root + "/composer.lock", files.file("composer.lock").contents) } else { composer }
-      let updated = locked.withExec(composerCommand + ["--no-autoloader"])
-      # The module's lock would overwrite the one Composer just wrote.
-      updated
-        .withDirectory(root, files, exclude: ["composer.lock"])
-        .withExec(["composer", "dump-autoload"])
     } else {
       sourceWithSdk(sdk).withExec(composerCommand)
     }
