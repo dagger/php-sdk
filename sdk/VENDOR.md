@@ -24,8 +24,12 @@ Local changes to the vendored files:
 - `tests/Unit/Service/Serialisation/SerialiserTest.php` uses `Id`. `ContainerId`
   exists upstream only as a stale committed class, which a regenerated client lacks.
 - `src/ValueObject/DaggerFunction.php` accepts a check with a required
-  `Workspace`, which the engine supplies, and `src/Exception/RegistrationError/Invalid.php`
-  says so.
+  `Workspace`, which the engine supplies. It validates checks, generators and up
+  functions through one rule beside the agent's own, and builds constructors and
+  methods through one call. `src/Exception/RegistrationError/Invalid.php` has one
+  factory per kind of mistake instead of one per role, and
+  `tests/Unit/ValueObject/DaggerFunctionTest.php` runs the shared rule over a
+  provider of roles.
 - `composer.json` autoloads the `DaggerModule` namespace of the test fixtures for
   development.
 - `src/Command/EntrypointCommand.php`, which no console registers, and its only

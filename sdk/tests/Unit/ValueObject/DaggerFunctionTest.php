@@ -17,6 +17,7 @@ use Dagger\Service;
 use Dagger\Tests\Unit\Fixture\DaggerObjectWithDaggerFunctions;
 use Dagger\ValueObject\Argument;
 use Dagger\ValueObject\DaggerFunction;
+use Dagger\ValueObject\ListOfType;
 use Dagger\ValueObject\Type;
 use Dagger\Workspace;
 use Generator;
@@ -33,6 +34,8 @@ use RuntimeException;
 #[CoversClass(DaggerFunction::class)]
 class DaggerFunctionTest extends TestCase
 {
+    private const AGENT_REQUIRES = 'Agents may only require their base LLM, a Workspace or an Agent';
+
     #[Test]
     #[DataProvider('provideInvalidDaggerFunctions')]
     public function itCannotTakeInvalidDaggerFunctions(
@@ -44,28 +47,91 @@ class DaggerFunctionTest extends TestCase
         DaggerFunction::fromReflection($reflection);
     }
 
-    #[Test]
-    public function itLetsAGeneratorRequireAWorkspace(): void
-    {
-        $method = (new ReflectionClass(new #[DaggerObject] class () {
-            #[\Dagger\Attribute\DaggerFunction]
-            #[\Dagger\Attribute\Generate]
-            public function generate(Workspace $workspace): Changeset {return new Changeset();}
-        }))->getMethod('generate');
+    #[Test, DataProvider('provideRoles')]
+    public function itLetsARoleRequireAWorkspace(
+        string $role,
+        Type $returns,
+        string $label,
+        string $requires,
+        string $mustReturn,
+    ): void {
+        $workspace = new Argument('workspace', '', new Type(Workspace::class));
 
-        self::assertTrue(DaggerFunction::fromReflection($method)->withGenerator);
+        self::assertTrue((new DaggerFunction('f', null, [$workspace], $returns, ...[$role => true]))->$role);
     }
 
-    #[Test]
-    public function itLetsAnUpFunctionRequireAWorkspace(): void
-    {
-        $method = (new ReflectionClass(new #[DaggerObject] class () {
-            #[\Dagger\Attribute\DaggerFunction]
-            #[\Dagger\Attribute\Up]
-            public function serve(Workspace $workspace): Service {return new Service();}
-        }))->getMethod('serve');
+    #[Test, DataProvider('provideRoles')]
+    public function itRefusesARoleThatRequiresAnotherArgument(
+        string $role,
+        Type $returns,
+        string $label,
+        string $requires,
+        string $mustReturn,
+    ): void {
+        foreach ([new Type('string'), new ListOfType(new Type('string'))] as $type) {
+            try {
+                new DaggerFunction('f', null, [new Argument('name', '', $type)], $returns, ...[$role => true]);
+                self::fail("$role accepted a required argument");
+            } catch (Invalid $e) {
+                self::assertEquals(Invalid::requires('f', $label, 'name', $requires), $e);
+            }
+        }
+    }
 
-        self::assertTrue(DaggerFunction::fromReflection($method)->withUp);
+    #[Test, DataProvider('provideRoles')]
+    public function itRefusesARoleThatReturnsAList(
+        string $role,
+        Type $returns,
+        string $label,
+        string $requires,
+        string $mustReturn,
+    ): void {
+        self::expectExceptionObject(Invalid::returns('f', $label, 'array', $mustReturn));
+
+        new DaggerFunction('f', null, [], new ListOfType($returns), ...[$role => true]);
+    }
+
+    #[Test, DataProvider('provideRoles')]
+    public function itRefusesANullableReturnUnlessACheck(
+        string $role,
+        Type $returns,
+        string $label,
+        string $requires,
+        string $mustReturn,
+    ): void {
+        if ($role !== 'withCheck') {
+            self::expectExceptionObject(Invalid::returns('f', $label, $returns->name, $mustReturn));
+        }
+
+        $function = new DaggerFunction('f', null, [], new Type($returns->name, nullable: true), ...[$role => true]);
+
+        self::assertTrue($function->$role);
+    }
+
+    /** @return Generator<string, array{string, Type, string, string, string}> */
+    public static function provideRoles(): Generator
+    {
+        yield 'check' => [
+            'withCheck',
+            new Type(Container::class),
+            'a check',
+            'Checks may only require a Workspace',
+            'Checks must return Containers or void',
+        ];
+        yield 'generator' => [
+            'withGenerator',
+            new Type(Changeset::class),
+            'a generator',
+            'Generators may only require a Workspace',
+            'Generators must return a non-null Changeset',
+        ];
+        yield 'up' => [
+            'withUp',
+            new Type(Service::class),
+            'up',
+            'Up functions may only require a Workspace',
+            'Up functions must return a non-null Service',
+        ];
     }
 
     #[Test]
@@ -132,105 +198,13 @@ class DaggerFunctionTest extends TestCase
             MissingAttribute::returnsListOfType('returnsArrayWithoutAttribute'),
         ];
 
-        yield 'check requiring a string' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Check]
-                public function lint(string $path): void {}
-            }))->getMethod('lint'),
-            Invalid::checkTakesNoArgs('lint', 'path'),
-        ];
-
-        yield 'check requiring a list' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Check]
-                public function lint(#[\Dagger\Attribute\ListOfType('string')] array $paths): void {}
-            }))->getMethod('lint'),
-            Invalid::checkTakesNoArgs('lint', 'paths'),
-        ];
-
-        yield 'generator that requires an argument' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Generate]
-                public function generate(string $name): Changeset {return new Changeset();}
-            }))->getMethod('generate'),
-            Invalid::generatorRequiresOnlyWorkspace('generate', 'name'),
-        ];
-
-        yield 'generator that may return null' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Generate]
-                public function generate(): ?Changeset {return null;}
-            }))->getMethod('generate'),
-            Invalid::generatorReturnsChangeset('generate', Changeset::class),
-        ];
-
-        yield 'generator that requires a list' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Generate]
-                public function generate(#[\Dagger\Attribute\ListOfType('string')] array $names): Changeset {return new Changeset();}
-            }))->getMethod('generate'),
-            Invalid::generatorRequiresOnlyWorkspace('generate', 'names'),
-        ];
-
-        yield 'generator that returns a list' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Generate]
-                #[\Dagger\Attribute\ReturnsListOfType('string')]
-                public function generate(): array {return [];}
-            }))->getMethod('generate'),
-            Invalid::generatorReturnsChangeset('generate', 'array'),
-        ];
-
-        yield 'up function that requires an argument' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Up]
-                public function serve(string $name): Service {return new Service();}
-            }))->getMethod('serve'),
-            Invalid::upRequiresOnlyWorkspace('serve', 'name'),
-        ];
-
-        yield 'up function that may return null' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Up]
-                public function serve(): ?Service {return null;}
-            }))->getMethod('serve'),
-            Invalid::upReturnsService('serve', Service::class),
-        ];
-
-        yield 'up function that requires a list' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Up]
-                public function serve(#[\Dagger\Attribute\ListOfType('string')] array $names): Service {return new Service();}
-            }))->getMethod('serve'),
-            Invalid::upRequiresOnlyWorkspace('serve', 'names'),
-        ];
-
-        yield 'up function that returns a list' => [
-            (new ReflectionClass(new #[DaggerObject] class () {
-                #[\Dagger\Attribute\DaggerFunction]
-                #[\Dagger\Attribute\Up]
-                #[\Dagger\Attribute\ReturnsListOfType('string')]
-                public function serve(): array {return [];}
-            }))->getMethod('serve'),
-            Invalid::upReturnsService('serve', 'array'),
-        ];
-
         yield 'agent that requires an argument' => [
             (new ReflectionClass(new #[DaggerObject] class () {
                 #[\Dagger\Attribute\DaggerFunction]
                 #[\Dagger\Attribute\Agent]
                 public function assist(LLM $base, string $name): LLM {return $base;}
             }))->getMethod('assist'),
-            Invalid::agentRequiresArgument('assist', 'name'),
+            Invalid::requires('assist', 'an agent', 'name', self::AGENT_REQUIRES),
         ];
 
         yield 'agent that requires a list' => [
@@ -239,7 +213,7 @@ class DaggerFunctionTest extends TestCase
                 #[\Dagger\Attribute\Agent]
                 public function assist(LLM $base, #[\Dagger\Attribute\ListOfType('string')] array $names): LLM {return $base;}
             }))->getMethod('assist'),
-            Invalid::agentRequiresArgument('assist', 'names'),
+            Invalid::requires('assist', 'an agent', 'names', self::AGENT_REQUIRES),
         ];
 
         yield 'agent that requires two bases' => [
@@ -248,7 +222,7 @@ class DaggerFunctionTest extends TestCase
                 #[\Dagger\Attribute\Agent]
                 public function assist(LLM $base, LLM $other): LLM {return $base;}
             }))->getMethod('assist'),
-            Invalid::agentRequiresArgument('assist', 'other'),
+            Invalid::requires('assist', 'an agent', 'other', self::AGENT_REQUIRES),
         ];
 
         yield 'agent with an optional second LLM' => [
@@ -284,7 +258,7 @@ class DaggerFunctionTest extends TestCase
                 #[\Dagger\Attribute\Agent]
                 public function assist(LLM $base): ?LLM {return null;}
             }))->getMethod('assist'),
-            Invalid::agentReturnsLLM('assist', LLM::class),
+            Invalid::returns('assist', 'an agent', LLM::class, 'Agents must return a non-null LLM'),
         ];
 
         yield 'agent that returns a list' => [
@@ -294,7 +268,7 @@ class DaggerFunctionTest extends TestCase
                 #[\Dagger\Attribute\ReturnsListOfType('string')]
                 public function assist(LLM $base): array {return [];}
             }))->getMethod('assist'),
-            Invalid::agentReturnsLLM('assist', 'array'),
+            Invalid::returns('assist', 'an agent', 'array', 'Agents must return a non-null LLM'),
         ];
     }
 

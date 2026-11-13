@@ -169,20 +169,11 @@ final readonly class DangEntrypointRenderer
             $lines[] = '  .withDescription(' . self::quote($function->description) . ')';
         }
 
-        if ($function->withCheck) {
-            $lines[] = '  .withCheck';
-        }
-
-        if ($function->withGenerator) {
-            $lines[] = '  .withGenerator';
-        }
-
-        if ($function->withUp) {
-            $lines[] = '  .withUp';
-        }
-
-        if ($function->withAgent) {
-            $lines[] = '  .withAgent';
+        // Each role's property is named after the Dang call that registers it.
+        foreach (['withCheck', 'withGenerator', 'withUp', 'withAgent'] as $role) {
+            if ($function->$role) {
+                $lines[] = "  .$role";
+            }
         }
 
         foreach ($function->arguments as $argument) {
