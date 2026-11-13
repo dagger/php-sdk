@@ -259,13 +259,10 @@ as a client.
 
 A dependency matches a client by its source only, whatever the dependency's name,
 so a dependency named by an alias matches the client of its source. A local path
-is relative to the module. A Git ref must name the client's repository and
-subpath. The comparison ignores the scheme, the user, a port, a trailing `/` and
-the case of the host, so `https://`, `ssh://` and `git@host:path` spellings
-match. A `.git` suffix ends the repository: `host/org.git/repo` is the subpath
-`repo` of `host/org`. A version can hold a `/`, as `@feature/foo` does. A ref with a `#`
-selector does not match. A dependency with a `pin` must have the client's pin. A
-dependency with only a version must have the client's version or pin. A
+is relative to the module. A Git ref must be spelled as the client was added,
+with the same version or version query such as `@v1`, or at the client's pin; a
+dependency with a `pin` is compared at that pin. A ref with a `#` selector, such
+as `https://host/org/repo#v1:sub`, is refused: write it as `host/org/repo/sub@v1`. A
 dependency written as a source string, as in a legacy `dagger.json`, is read as
 that source.
 

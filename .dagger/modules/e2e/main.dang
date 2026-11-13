@@ -748,17 +748,14 @@ type E2e {
       "add each client, or remove the dependency:\n  dagger module client add ../../client-target/maker",
       "a client with the dependency's name and another source should not provide it",
     )
-    assertContains(generationError(named), "matching by source and Git version or pin, not by name", "a dependency that no client provides should be refused")
+    assertContains(generationError(named), "matching by source as spelled, at its version or pin, not by name", "a dependency that no client provides should be refused")
     let helpers = moduleSource("github.com/dagger/sdk-helpers@v1.0.9")
     let helpersSource = dependsOn + "source = \"github.com/dagger/sdk-helpers@v1.0.9\"\n"
     assertContains(generationError(local.withNewFile("/" + manifest, helpersSource.replace("v1.0.9", "v1.0.8")), clients: [helpers]), "  dagger module client add github.com/dagger/sdk-helpers@v1.0.8", "a Git dependency at another version than its client should be refused")
     let helpersPin = "daffbc01a1b3f3df7b1c417a7d2c83cd06d1bd33"
     [
       [helpersSource, "a Git dependency equal to its client"],
-      [dependsOn + "source = \"https://github.com/dagger/sdk-helpers.git@v1.0.9\"\n", "an https:// ref ending in .git"],
-      [dependsOn + "source = \"git@github.com:dagger/sdk-helpers@v1.0.9\"\n", "an SSH ref"],
-      [dependsOn + "source = \"ssh://git@github.com:22/dagger/sdk-helpers@v1.0.9\"\n", "an ssh:// ref with a port"],
-      [dependsOn + "source = \"GitHub.com/dagger/sdk-helpers@v1.0.9\"\npin = \"" + helpersPin + "\"\n", "a ref with another host case at its client's pin"],
+      [helpersSource + "pin = \"" + helpersPin + "\"\n", "a Git dependency at its client's pin"],
     ].each { case =>
       let provided = generatedEntrypoint(local.withNewFile("/" + manifest, case[0] ?? ""), clients: [helpers])
       assertNotContains(contentsOf(provided, manifest), "[[dependencies]]", (case[1] ?? "") + " should be provided by its client")
@@ -766,16 +763,31 @@ type E2e {
       null
     }
     assertContains(
-      generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"github.com/dagger.git/sdk-helpers@v1.0.9\"\n"), clients: [helpers]),
-      "  dagger module client add github.com/dagger.git/sdk-helpers@v1.0.9",
-      "a subdirectory of another repository should not be provided by a client of the same path",
+      generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"https://github.com/dagger/sdk-helpers#v1.0.9:docs\"\npin = \"" + helpersPin + "\"\n"), clients: [helpers]),
+      "has the dependency https://github.com/dagger/sdk-helpers#v1.0.9:docs, whose # selector php-sdk does not compare",
+      "a dependency with a # selector should be refused as such",
     )
+    let helpersQuery = moduleSource("github.com/dagger/sdk-helpers@v1")
+    let queried = generatedEntrypoint(local.withNewFile("/" + manifest, dependsOn + "source = \"github.com/dagger/sdk-helpers@v1\"\npin = \"" + helpersQuery.pin + "\"\n"), clients: [helpersQuery])
+    assertNotContains(contentsOf(queried, manifest), "[[dependencies]]", "a dependency at a version query should be provided by its client at the pin the query resolved to")
+    let fakePin = "1111111111111111111111111111111111111111"
+    [
+      ["ssh://git@example.com/org/repo", "ssh://git@example.com/org/repo@" + fakePin],
+      ["https://user@example.com/org/repo@v2", "https://user@example.com/org/repo@" + fakePin],
+      ["git@example.com:org/repo@feature/x", "git@example.com:org/repo@" + fakePin],
+    ].each { case =>
+      assertContains(
+        generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"" + (case[0] ?? "") + "\"\npin = \"" + fakePin + "\"\n"), clients: [helpers]),
+        "  dagger module client add " + (case[1] ?? ""),
+        (case[0] ?? "") + " should be named at its pin",
+      )
+      null
+    }
     assertContains(
       generationError(local.withNewFile("/" + manifest, helpersSource + "pin = \"0000000000000000000000000000000000000000\"\n"), clients: [helpers]),
       "  dagger module client add github.com/dagger/sdk-helpers@0000000000000000000000000000000000000000",
       "a Git dependency pinned to another commit than its client should be refused, with its pin",
     )
-    assertContains(generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"github.com/dagger/sdk-helpers#v1.0.9\"\n"), clients: [helpers]), "no client of its scope", "a ref with a selector should be refused")
     assertContains(
       generationError(local.withNewFile("/" + manifest, dependsOn + "name = \"sdk-helpers\"\nsource = \"../expected\"\n"), clients: [helpers]),
       "  dagger module client add ../expected",
