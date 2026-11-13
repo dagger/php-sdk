@@ -187,18 +187,20 @@ type Mod {
     checkConfig
     checkSdkOwned
     checkClients
+    checkOutsidePaths(true)
     let sdk = sdkTree
     let installed = if (composerFilesFirst) {
+      let root = "/work/" + rootPath
       let files = seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true)
-      let composer = phpContainer
-        .withNewFile("/src/composer.json", files.file("composer.json").contents)
-        .withDirectory("/src/sdk", sdk)
-        .withWorkdir("/src")
-      let locked = if (files.exists("composer.lock")) { composer.withNewFile("/src/composer.lock", files.file("composer.lock").contents) } else { composer }
+      let composer = withOutsideDirectories
+        .withNewFile(root + "/composer.json", files.file("composer.json").contents)
+        .withDirectory(root + "/sdk", sdk)
+        .withWorkdir(root)
+      let locked = if (files.exists("composer.lock")) { composer.withNewFile(root + "/composer.lock", files.file("composer.lock").contents) } else { composer }
       let updated = locked.withExec(composerCommand + ["--no-autoloader"])
       # The module's lock would overwrite the one Composer just wrote.
       updated
-        .withDirectory("/src", files, exclude: ["composer.lock"])
+        .withDirectory(root, files, exclude: ["composer.lock"])
         .withExec(["composer", "dump-autoload"])
     } else {
       sourceWithSdk(sdk).withExec(composerCommand)
@@ -206,13 +208,13 @@ type Mod {
     let describing = installed
       .withEnvVariable("DAGGER_CLIENT_VERSION", targetEngineVersion)
       .withExec(
-        ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint"],
+        ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint", "--outside", JSON.encode(outsideDirectories)],
         experimentalPrivilegedNesting: true,
       )
     let entrypoint = describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang)
     let written = withoutSdk
       .withDirectory(modulePath("sdk"), sdk.withDirectory("entrypoint", entrypoint))
-      .withNewFile(modulePath("composer.lock"), describing.file("/src/composer.lock").contents, permissions: 420)
+      .withNewFile(modulePath("composer.lock"), describing.file("composer.lock").contents, permissions: 420)
     withGitVisibility(withManifest(withConfig(written)))
   }
 
@@ -275,19 +277,20 @@ type Mod {
     }
     checkSdkOwned
     checkClients
+    checkOutsidePaths(false)
     let sdk = sdkTree
     let source = sourceWithSdk(sdk)
     let repository = if (usesSdkRepository) { source } else { source.withExec(["composer", "config", "repositories.dagger-sdk", "path", "./sdk"]) }
     let wired = repository
       .withExec(["composer", "require", "--no-update", "dagger/dagger:*@dev"])
       .withExec(composerCommand)
-    let lock = wired.file("/src/composer.lock").contents
+    let lock = wired.file("composer.lock").contents
     if (lock.containsMatch(Regexp(sdkLockPattern)) == false) {
       raise label + " has a Composer repository that provides dagger/dagger in place of ./sdk, which holds its clients: remove that repository, or the filters on ./sdk"
     }
     withoutSdk
       .withDirectory(modulePath("sdk"), sdk)
-      .withNewFile(modulePath("composer.json"), wired.file("/src/composer.json").contents, permissions: 420)
+      .withNewFile(modulePath("composer.json"), wired.file("composer.json").contents, permissions: 420)
       .withNewFile(modulePath("composer.lock"), lock, permissions: 420)
   }
 
@@ -296,11 +299,23 @@ type Mod {
   """
   let sdkLockPattern: String! = "\"name\": \"dagger/dagger\",[^}]*\"dist\": \\{\\s*\"type\": \"path\",\\s*\"url\": \"(\\./)?sdk/?\""
 
+  """
+  The module at its workspace path under /work, beside the Composer paths
+  outside it, so that Composer resolves them as it does in the workspace.
+  """
   let sourceWithSdk(sdk: Directory!): Container! {
-    phpContainer
-      .withDirectory("/src", seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true))
-      .withDirectory("/src/sdk", sdk)
-      .withWorkdir("/src")
+    let root = "/work/" + rootPath
+    withOutsideDirectories
+      .withDirectory(root, seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true))
+      .withDirectory(root + "/sdk", sdk)
+      .withWorkdir(root)
+  }
+
+  let withOutsideDirectories: Container! {
+    outsideDirectories.reduce(phpContainer) { ctr, path =>
+      let rooted = workspacePath(path)
+      ctr.withDirectory("/work/" + rooted, seeded.directory(rooted, exclude: ["**/.git", "vendor"], gitignore: true))
+    }
   }
 
   """
@@ -500,16 +515,7 @@ type Mod {
   Whether an import path of the entrypoint's dang.toml resolves inside sdk/.
   """
   let pathStaysInSdk(path: String!): Boolean! {
-    let resolved = path.split("/").reduce(["sdk", "entrypoint"]) { segments, segment =>
-      if (segment == "" or segment == ".") {
-        segments
-      } else if (segment == ".." and segments.length > 0 and (segments[segments.length - 1] ?? "") != "..") {
-        segments.dropLast(1)
-      } else {
-        segments + [segment]
-      }
-    }
-    path != "" and path.hasPrefix("/") == false and (resolved[0] ?? "") == "sdk"
+    path != "" and path.hasPrefix("/") == false and (normalized(path, ["sdk", "entrypoint"]).split("/")[0] ?? "") == "sdk"
   }
 
   """
@@ -604,8 +610,9 @@ type Mod {
 
   """
   Why the generated entrypoint cannot run this module. The entrypoint builds from
-  the module's own directory with the Composer settings the module has, so what
-  reaches outside that directory, or changes what it loads, is not preserved.
+  the module's own directory and the Composer paths outside it that sources
+  returns, so other files outside that directory, or settings that change what
+  it loads, are not preserved.
   The engine reads pre-v2 clients and disableDefaultFunctionCaching only from a
   runtime manifest.
   """
@@ -625,14 +632,111 @@ type Mod {
       [] :: [String!]!
     } else {
       let composer = parsedJson(contentsOf("composer.json"))
-      let external = (repositoryPaths + autoloadPaths(composer, "autoload") + autoloadPaths(composer, "autoload-dev"))
-        .filter { path => leavesModule(path) }
+      let external = composerPaths
+        .filter { path => leavesModule(path) and workspacePath(path) == "" }
         .map { path => "Composer reads " + path + " outside the module" }
+      let files = outsidePaths
+        .filter { path => entryExists(workspacePath(path), ExistsType.REGULAR_TYPE) }
+        .map { path => "Composer reads the file " + path + " outside the module" }
       let vendorDir = if (composer.fields.contains("config")) { stringField(composer.field(["config"]), "vendor-dir") } else { "" }
       (if (usesSdkRepository) { [] :: [String!]! } else { ["composer.json has no path repository ./sdk"] }) +
         external +
+        files +
         (if (vendorDir == "" or vendorDir == "vendor") { [] :: [String!]! } else { ["composer.json moves vendor-dir to " + vendorDir] })
     }
+  }
+
+  let composerPaths: [String!]! {
+    let composer = parsedJson(contentsOf("composer.json"))
+    repositoryPaths + autoloadPaths(composer, "autoload") + autoloadPaths(composer, "autoload-dev")
+  }
+
+  """
+  The Composer paths that leave the module through "..", relative to it, that
+  the workspace can provide.
+  """
+  let outsidePaths: [String!]! {
+    if (fileExists("composer.json") == false) { return [] :: [String!]! }
+    composerPaths
+      .filter { path => leavesModule(path) and workspacePath(path) != "" }
+      .map { path => normalized(path) }
+      .reduce([] :: [String!]!) { found, path => if (found.contains(path)) { found } else { found + [path] } }
+  }
+
+  """
+  The outside paths that are directories. Generation mounts each one, and the
+  entrypoint's sources returns it, so the engine loads it with the module. A
+  file is neither: a module with one keeps the runtime, and a program's
+  composer update does not read an autoload file.
+  """
+  let outsideDirectories: [String!]! {
+    outsidePaths.filter { path => entryExists(workspacePath(path), ExistsType.DIRECTORY_TYPE) }
+  }
+
+  """
+  The workspace-root-relative path a Composer path outside the module names, or
+  "" when it keeps the runtime. Composer walks every directory a path names, such
+  as bridge in ../bridge/../lib, so only leading ".." segments are mounted
+  faithfully; the workspace root would upload the whole workspace on every load.
+  """
+  let workspacePath(path: String!): String! {
+    let direct = path.split("/").filter { segment => segment != "" and segment != "." }.join("/")
+    let rooted = normalized(modulePath(path))
+    let unrooted = path.hasPrefix("/") or path.hasPrefix("~") or path.contains("$")
+    if (unrooted or normalized(path) != direct or rooted == "." or (rooted.split("/")[0] ?? "") == "..") { "" } else { rooted }
+  }
+
+  """
+  seed followed by the segments of path, without "." and with each ".." after a
+  name removed along with it, joined by "/"; "." when nothing is left.
+  """
+  let normalized(path: String!, seed: [String!]! = []): String! {
+    let segments = path.split("/").reduce(seed) { kept, segment =>
+      if (segment == "" or segment == ".") {
+        kept
+      } else if (segment == ".." and kept.length > 0 and (kept[kept.length - 1] ?? "") != "..") {
+        kept.dropLast(1)
+      } else {
+        kept + [segment]
+      }
+    }
+    if (segments.length == 0) { "." } else { segments.join("/") }
+  }
+
+  let entryExists(path: String!, type: ExistsType): Boolean! {
+    ws.directory("/", include: [path], exclude: [path + "/**"]).exists(path, expectedType: type)
+  }
+
+  """
+  Refuse a Composer path outside the module that cannot be loaded. For the
+  entrypoint's sources, which reads each directory with .gitignore applied, also
+  refuse a symlink: the engine imports one without the path it names.
+  """
+  let checkOutsidePaths(sources: Boolean!): Void {
+    outsidePaths.each { path =>
+      let rooted = workspacePath(path)
+      let named = label + " reads " + path + " through Composer, which"
+      if (sources) {
+        let prefixes = rooted.split("/").reduce([] :: [String!]!) { found, part =>
+          found + [if (found.length == 0) { part } else { (found[found.length - 1] ?? "") + "/" + part }]
+        }
+        let links = prefixes.filter { prefix => entryExists(prefix, ExistsType.SYMLINK_TYPE) }
+        if (links.length > 0) {
+          raise named + " goes through the symlink " + (links[0] ?? "") + ": point Composer at the directory it names"
+        }
+      }
+      if (entryExists(rooted, null) == false) {
+        raise named + " holds no file in the workspace"
+      }
+      if (sources and entryExists(rooted, ExistsType.DIRECTORY_TYPE)) {
+        let kept = ws.directory("/" + rooted, exclude: ["**/.git", "**/.gitignore"], gitignore: true).glob("**").filter { file => file.hasSuffix("/") == false }
+        if (kept.length == 0) {
+          raise named + " holds no file that .gitignore keeps"
+        }
+      }
+      null
+    }
+    null
   }
 
   let repositories: [String!]! {

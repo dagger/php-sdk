@@ -1,0 +1,32 @@
+{
+  "name": "daggermodule/outside-app",
+  "version": "1.0.0",
+  "minimum-stability": "dev",
+  "license": "proprietary",
+  "repositories": [
+    {
+      "type": "path",
+      "url": "./sdk"
+    },
+    {
+      "type": "path",
+      "url": "../lib"
+    }
+  ],
+  "require": {
+    "php": "^8.2",
+    "acme/lib": "*@dev",
+    "dagger/dagger": "*@dev"
+  },
+  "autoload": {
+    "psr-4": {
+      "DaggerModule\\": "src/",
+      "Shared\\": "../shared/src/"
+    }
+  },
+  "config": {
+    "platform": {
+      "php": "8.3.7"
+    }
+  }
+}

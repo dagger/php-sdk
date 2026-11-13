@@ -34,13 +34,14 @@ final readonly class DangEntrypointRenderer
         string $clientVersion,
         string $output,
         ?Closure $enumMemberNames = null,
+        array $outside = [],
     ): void {
         if (!is_dir($output) && !mkdir($output, 0755, true)) {
             throw new RuntimeException("Cannot create the directory $output");
         }
 
         file_put_contents("$output/types.dang", self::renderTypes($description, $moduleName, $enumMemberNames));
-        file_put_contents("$output/main.dang", self::renderMain($clientVersion));
+        file_put_contents("$output/main.dang", self::renderMain($clientVersion, $outside));
     }
 
     /**
@@ -72,9 +73,24 @@ final readonly class DangEntrypointRenderer
             . $body . "    ]\n  }\n}\n";
     }
 
-    public static function renderMain(string $clientVersion): string
+    /**
+     * @param list<string> $outside Directories outside the module that its
+     *     Composer setup reads, relative to the module.
+     */
+    public static function renderMain(string $clientVersion, array $outside = []): string
     {
-        return self::HEADER . strtr(self::MAIN, ['%clientVersion%' => self::quote($clientVersion)]);
+        $sources = implode('', array_map(
+            static fn($path) => '      .withDirectory(workspace.cwd + ' . self::quote("/$path")
+                . ', workspace.directory(' . self::quote($path) . ', exclude: ' . self::SOURCES_EXCLUDE
+                . ", gitignore: true))\n",
+            $outside,
+        ));
+
+        return self::HEADER . strtr(self::MAIN, [
+            '%clientVersion%' => self::quote($clientVersion),
+            "%sources%\n" => $sources,
+            '%exclude%' => self::SOURCES_EXCLUDE,
+        ]);
     }
 
     /** @return list<string> */
@@ -282,11 +298,15 @@ final readonly class DangEntrypointRenderer
         ];
     }
 
+    private const SOURCES_EXCLUDE = '["**/.git", "vendor"]';
+
     private const MAIN = <<<'DANG'
 
     type Entrypoint implements ModuleEntrypoint {
       pub sources(workspace: Workspace!): Directory! {
-        directory.withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git", "vendor"], gitignore: true))
+        directory
+    %sources%
+          .withDirectory(workspace.cwd, workspace.directory(".", exclude: %exclude%, gitignore: true))
       }
 
       pub types: [TypeDef!]! {
