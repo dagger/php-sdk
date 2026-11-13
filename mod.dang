@@ -188,10 +188,21 @@ type Mod {
     checkSdkOwned
     checkClients
     checkOutsidePaths(true)
+    let written = withoutSdk
+      .withDirectory(modulePath("sdk"), generatedSdk)
+      .withNewFile(modulePath("composer.lock"), describing.file("composer.lock").contents, permissions: 420)
+    withGitVisibility(withManifest(withConfig(written)))
+  }
+
+  """
+  The module with its Composer dependencies installed and its entrypoint
+  rendered into /dagger/entrypoint.
+  """
+  let describing: Container! {
     let sdk = sdkTree
     let installed = if (composerFilesFirst) {
       let root = "/work/" + rootPath
-      let files = seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true)
+      let files = seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"] + excludedPatterns, gitignore: true)
       let composer = withOutsideDirectories
         .withNewFile(root + "/composer.json", files.file("composer.json").contents)
         .withDirectory(root + "/sdk", sdk)
@@ -205,17 +216,19 @@ type Mod {
     } else {
       sourceWithSdk(sdk).withExec(composerCommand)
     }
-    let describing = installed
+    installed
       .withEnvVariable("DAGGER_CLIENT_VERSION", targetEngineVersion)
       .withExec(
-        ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint", "--outside", JSON.encode(outsideDirectories)],
+        ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint", "--outside", JSON.encode(outsideDirectories), "--exclude", JSON.encode(excludedPatterns)],
         experimentalPrivilegedNesting: true,
       )
-    let entrypoint = describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang)
-    let written = withoutSdk
-      .withDirectory(modulePath("sdk"), sdk.withDirectory("entrypoint", entrypoint))
-      .withNewFile(modulePath("composer.lock"), describing.file("composer.lock").contents, permissions: 420)
-    withGitVisibility(withManifest(withConfig(written)))
+  }
+
+  """
+  The sdk/ that generation writes, without the dang.toml withConfig adds.
+  """
+  let generatedSdk: Directory! {
+    sdkTree.withDirectory("entrypoint", describing.directory("/dagger/entrypoint").withNewFile("build.dang", buildDang))
   }
 
   """
@@ -306,7 +319,7 @@ type Mod {
   let sourceWithSdk(sdk: Directory!): Container! {
     let root = "/work/" + rootPath
     withOutsideDirectories
-      .withDirectory(root, seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"], gitignore: true))
+      .withDirectory(root, seeded.directory(rootPath, exclude: [".git", "vendor", "sdk"] + excludedPatterns, gitignore: true))
       .withDirectory(root + "/sdk", sdk)
       .withWorkdir(root)
   }
@@ -422,18 +435,27 @@ type Mod {
   }
 
   """
-  A module migrating from the runtime loses what only a runtime reads. A module
+  A module migrating from the runtime loses what only a runtime reads, except
+  its include patterns, which every generation translates again. A module
   already on the entrypoint keeps a runtime it names for older engines, which
-  read such a manifest as a runtime manifest.
+  read such a manifest as a runtime manifest, include and all.
+
+  sdk-helpers v1.0.9 refuses to write include into a manifest without a
+  runtime, so the patterns are prepended to the file it writes. Drop the
+  prepend once sdk-helpers writes include itself, or the key appears twice.
   """
   let withManifest(target: Workspace!): Workspace! {
     let loaded = sdkHelpers.loadModuleManifest(ws.withWorkdir(".").withWorkdir(rootPath))
-    let base = if (hasEntrypoint) { loaded } else { loaded.withoutLegacyFields }
-    base
+    let namesRuntime = hasEntrypoint and runtimeSource != ""
+    let base = if (namesRuntime) { loaded } else { loaded.withoutLegacyFields }
+    let written = base
       .withName(name: moduleName)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(target.withWorkdir(rootPath), lock: false, legacyJson: false)
       .withWorkdir(".")
+    if (namesRuntime or includePatterns.length == 0) { return written }
+    let path = modulePath("dagger-module.toml")
+    written.withNewFile(path, "include = " + JSON.encode(includePatterns) + "\n" + written.directory("/", include: [path]).file(path).contents, permissions: 420)
   }
 
   """
@@ -617,14 +639,95 @@ type Mod {
   runtime manifest.
   """
   let entrypointBlockers: [String!]! {
-    let declared = ["include", "exclude", "blueprint", "toolchains", "clients"]
+    let declared = ["blueprint", "toolchains", "clients"]
       .filter { field => declares(field) }
       .map { field => "it declares " + field }
     let cachingDisabled = declares("disableDefaultFunctionCaching") and toString(manifest.field(["disableDefaultFunctionCaching"]).contents).trimSpace == "true"
     let cachingBlocker = if (cachingDisabled) { ["it sets disableDefaultFunctionCaching"] } else { [] :: [String!]! }
     let source = stringField(manifest, "source").trimPrefix("./").trimSuffix("/")
     let sourceBlocker = if (source == "" or source == ".") { [] :: [String!]! } else { ["its source is " + source] }
-    declared + cachingBlocker + sourceBlocker + composerBlockers
+    let others = declared + cachingBlocker + sourceBlocker + composerBlockers + includeBlockers
+    if (others.length > 0) { others } else { generatedBlockers }
+  }
+
+  """
+  The manifest's include patterns, relative to the module, with each exclude
+  entry as the negated include pattern it stands for, as the engine and
+  sdk-helpers read them (dagger/dagger v1.0.0-beta.27,
+  normalizeLoadedModuleConfig). The engine always loads the module directory,
+  so a plain pattern inside it changes nothing.
+  """
+  let includePatterns: [String!]! {
+    let excluded = if (declares("exclude")) { stringsOf(toString(manifest.field(["exclude"]).contents)) } else { [] :: [String!]! }
+    let included = if (declares("include")) { stringsOf(toString(manifest.field(["include"]).contents)) } else { [] :: [String!]! }
+    included + excluded.filter { pattern => pattern != "" }.map { pattern => if (pattern.hasPrefix("!")) { pattern.trimPrefix("!") } else { "!" + pattern } }
+  }
+
+  """
+  What the negated include patterns drop from the module. The build leaves them
+  out, because engines before v1.0.0-beta.26 ignore include in a version 2
+  manifest and load them.
+  """
+  let excludedPatterns: [String!]! {
+    includePatterns.filter { pattern => pattern.hasPrefix("!") }.map { pattern => normalized(pattern.trimPrefix("!")) }
+  }
+
+  """
+  The include patterns the generated entrypoint cannot translate. A version 2
+  include alone replaces sources from v1.0.0-beta.26, so beside it sources would
+  not return the Composer paths outside the module.
+  """
+  let includeBlockers: [String!]! {
+    let besideComposer = if (includePatterns.length > 0 and outsidePaths.length > 0) { ["it declares " + (if (declares("include")) { "include" } else { "exclude" }) + " beside Composer paths outside the module"] } else { [] :: [String!]! }
+    includeBlockersFrom(0, false) + besideComposer
+  }
+
+  """
+  The exclusions that drop a file generation writes or the build installs from,
+  which the engine's PHP runtime adds back after its filter. Each is matched
+  first against composer.json and composer.lock, which generation itself needs,
+  and against sdk/ as a whole, then against the sdk/ generation writes, through
+  the same exclude matching as the build. Generating that sdk/ is what migration
+  does next, so it runs only when no other blocker keeps the runtime.
+  """
+  let generatedBlockers: [String!]! {
+    if (excludedPatterns.length == 0) { return [] :: [String!]! }
+    let composerFiles = directory.withNewFile("composer.json", "").withNewFile("composer.lock", "")
+    let known = excludedPatterns.filter { pattern => ["sdk", "sdk/*", "sdk/**"].contains(pattern) or drops(composerFiles, pattern) }
+    let dropping = if (known.length > 0) {
+      known
+    } else {
+      checkOutsidePaths(true)
+      let generated = directory.withDirectory("sdk", generatedSdk.withNewFile("entrypoint/dang.toml", ""))
+      excludedPatterns.filter { pattern => drops(generated, pattern) }
+    }
+    dropping.map { pattern => "its exclusion " + pattern + " drops files the generated entrypoint needs" }
+  }
+
+  let drops(tree: Directory!, pattern: String!): Boolean! {
+    directory.withDirectory(".", tree, exclude: [pattern]).glob("**").length < tree.glob("**").length
+  }
+
+  """
+  The include blockers from the pattern at index i on. A build filter only drops
+  files, so a plain pattern after an exclusion, which could add some back, is
+  not translated.
+  """
+  let includeBlockersFrom(i: Int!, excluding: Boolean!): [String!]! {
+    if (i >= includePatterns.length) { return [] :: [String!]! }
+    let pattern = includePatterns[i] ?? ""
+    let negated = pattern.hasPrefix("!")
+    let path = pattern.trimPrefix("!")
+    let blocker = if (leavesModule(path)) {
+      ["its include pattern " + pattern + (if (negated) { " excludes" } else { " reaches" }) + " outside the module"]
+    } else if (negated and normalized(path).hasPrefix("!")) {
+      ["its include pattern " + pattern + " excludes a name that starts with !, which the build filter would read as an inclusion"]
+    } else if (negated == false and excluding) {
+      ["its include pattern " + pattern + " includes again after an exclusion"]
+    } else {
+      [] :: [String!]!
+    }
+    blocker + includeBlockersFrom(i + 1, excluding or negated)
   }
 
   let composerBlockers: [String!]! {

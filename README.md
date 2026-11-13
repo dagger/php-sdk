@@ -153,7 +153,11 @@ A module moves to the entrypoint when it is self-contained. A module that has an
 of the following keeps the runtime in its manifest and gets no `dang.toml`:
 
 - `[[dependencies]]`
-- `include`, `exclude`, `blueprint` or `toolchains`
+- `blueprint` or `toolchains`
+- an `include` or `exclude` pattern outside the module, a plain `include` pattern
+  after an exclusion, or `include` beside Composer paths outside the module
+- an exclusion of a file generation writes, such as `sdk/` or `composer.json`
+- an exclusion of a name that starts with `!`
 - `disableDefaultFunctionCaching = true` or a `[[clients]]` table
 - an `engineVersion` later than `v1.0.0-beta.27`
 - a `source` other than the module directory
@@ -186,8 +190,22 @@ none of its changes.
 - `.gitignore` drops every file of the path.
 - The path goes through a symlink.
 
-A module already on the generated entrypoint that gains include rules, or a
-Composer path that keeps a module on the runtime, fails to generate. A generated
+A module with `include` or `exclude` patterns inside the module also moves to the
+entrypoint. The engine always loads the module directory, so a plain pattern
+changes nothing. An `exclude` entry, or an `include` pattern that starts with `!`,
+drops files: the generated build leaves them out. The migrated manifest keeps the
+patterns in `include`, with each `exclude` entry as a `!` pattern. Every generation
+reads them again, so editing `include` and running `dagger generate` updates the
+build.
+
+From `v1.0.0-beta.26` the engine applies `include` to the module's files.
+`v1.0.0-beta.18` to `v1.0.0-beta.25` ignore `include` in a version 2 manifest and
+load the excluded files. The generated build still leaves them out, so a call sees
+the same files on every supported engine.
+
+A module already on the generated entrypoint fails to generate when it gains a
+pattern that keeps a module on the runtime. It also fails when it gains such a
+Composer path. A generated
 entrypoint with `[[dependencies]]` and a `[runtime]` reads as a runtime manifest. With
 `[[dependencies]]` and no `[runtime]`, generation and the engine refuse it, because
 an entrypoint has no dependency list.

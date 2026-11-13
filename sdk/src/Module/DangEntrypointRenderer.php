@@ -35,13 +35,14 @@ final readonly class DangEntrypointRenderer
         string $output,
         ?Closure $enumMemberNames = null,
         array $outside = [],
+        array $exclude = [],
     ): void {
         if (!is_dir($output) && !mkdir($output, 0755, true)) {
             throw new RuntimeException("Cannot create the directory $output");
         }
 
         file_put_contents("$output/types.dang", self::renderTypes($description, $moduleName, $enumMemberNames));
-        file_put_contents("$output/main.dang", self::renderMain($clientVersion, $outside));
+        file_put_contents("$output/main.dang", self::renderMain($clientVersion, $outside, $exclude));
     }
 
     /**
@@ -76,8 +77,10 @@ final readonly class DangEntrypointRenderer
     /**
      * @param list<string> $outside Directories outside the module that its
      *     Composer setup reads, relative to the module.
+     * @param list<string> $exclude Patterns, relative to the module, that the
+     *     build leaves out.
      */
-    public static function renderMain(string $clientVersion, array $outside = []): string
+    public static function renderMain(string $clientVersion, array $outside = [], array $exclude = []): string
     {
         $sources = implode('', array_map(
             static fn($path) => '      .withDirectory(workspace.cwd + ' . self::quote("/$path")
@@ -90,6 +93,7 @@ final readonly class DangEntrypointRenderer
             '%clientVersion%' => self::quote($clientVersion),
             "%sources%\n" => $sources,
             '%exclude%' => self::SOURCES_EXCLUDE,
+            '%buildExclude%' => '[' . implode(', ', array_map(self::quote(...), $exclude)) . ']',
         ]);
     }
 
@@ -347,7 +351,7 @@ final readonly class DangEntrypointRenderer
       }
 
       let runtime: Container! {
-        PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed
+        PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath, exclude: %buildExclude%).installed
       }
     }
 
