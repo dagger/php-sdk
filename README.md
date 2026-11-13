@@ -427,21 +427,6 @@ The version is past the identifier-casing cut, which dagger/dagger gates at
 the new rules. From `v1.0.0-beta.22`, each release has an API view of its own, and the
 client is generated against the `v1.0.0-beta.27` view.
 
-The `targetVersion` setting, or `--target-version`, pins a module to another release
-only to `v1.0.0-beta.27`, which the client schema,
-`DAGGER_CLIENT_VERSION` and `dang.toml` then use. Generation refuses a value that is
-not a release or is any other release, and refuses a pin on a module that cannot
-move from the PHP runtime.
-
-`dagger.toml` records the setting for a module's scope under
-`[sdks.<name>.scopes."<path>".settings]`. `dagger generate` passes that record to
-the SDK. `mod` reads the record itself when no setting is passed. `dagger call
-php-sdk mod --path my-module generate` therefore generates for the same release.
-In `mod`, a setting passed to `php-sdk` wins over the record. In `dagger
-generate`, the record wins over `[modules.php-sdk.settings]`. `mod` refuses
-conflicting or case-colliding `targetVersion` records. It does not check the rest of
-the config. `dagger generate` validates the whole config itself.
-
 Passing checks on a released engine show what generation writes and that calls work.
 They do not show that `dang.toml` selects a view. No check here shows that
 `DAGGER_CLIENT_VERSION` selects one.
@@ -505,10 +490,11 @@ Generation fails, and applies none of its changes, in these cases:
   Git can arrive as a Git client, which this check does not catch.
 - Two clients have the same name once case and separators are ignored, such as
   `file-lister` and `FileLister`.
-- A client module declares a release on the other side of the identifier-casing
-  cut at `v1.0.0-beta.26` from the module's target. The engine names the client
-  module by the rules of the release it declares, whatever the API view of the
-  session that calls it. Its client uses the names of the module's target.
+- A client module declares a release before the identifier-casing cut at
+  `v1.0.0-beta.26`. The engine names the client module by the rules of the release
+  it declares, whatever the API view of the session that calls it, and its client
+  uses the names of `v1.0.0-beta.27`. Set the client module's `engineVersion` to
+  `v1.0.0-beta.27`.
 - A module function takes or returns a client's type. The message is in the
   generation's log; the error itself carries only the exit code.
 - A client module adds a field to a core type other than `Query`.
