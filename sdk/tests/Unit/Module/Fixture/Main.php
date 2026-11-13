@@ -174,4 +174,10 @@ class Main
     {
         return $base;
     }
+
+    #[Attribute\DaggerFunction]
+    public function area(Shape $shape): int
+    {
+        return $shape->area();
+    }
 }

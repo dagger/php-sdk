@@ -101,10 +101,12 @@ final readonly class DangEntrypointRenderer
     private static function object(DaggerObject $object, string $moduleName): array
     {
         $name = NormalizesClassName::trimLeadingNamespace($object->name);
-        $lines = ['typeDef.withObject(' . self::quote($name) . self::option('description', $object->description) . ')'];
+        $isInterface = $object->isInterface();
+        $lines = ['typeDef.' . ($isInterface ? 'withInterface' : 'withObject') . '(' . self::quote($name)
+            . self::option('description', $object->description) . ')'];
 
         foreach ($object->daggerFields as $field) {
-            $lines[] = '  .withField(' . self::quote($field->name) . ', ' . self::type($field->type)
+            $lines[] = '  .withField(' . self::quote($field->name) . ', ' . self::type($field->type, refuseInterfaces: true)
                 . self::option('description', $field->description) . ')';
         }
 
@@ -117,7 +119,7 @@ final readonly class DangEntrypointRenderer
         // The engine finds an entrypoint's main object by its constructor, even
         // for an object with neither fields nor one of its own, and refuses more
         // than one constructor. Only the main object's is ever called.
-        if (self::isMainObject($name, $moduleName)) {
+        if (!$isInterface && self::isMainObject($name, $moduleName)) {
             $constructor = $object->daggerFunctions[''] ?? null;
             $function = $constructor !== null
                 ? self::function($constructor)
@@ -183,7 +185,7 @@ final readonly class DangEntrypointRenderer
     /** @return list<string> */
     private static function function(DaggerFunction $function): array
     {
-        $lines = ['function(' . self::quote($function->name) . ', ' . self::type($function->returnType) . ')'];
+        $lines = ['function(' . self::quote($function->name) . ', ' . self::type($function->returnType, refuseInterfaces: true) . ')'];
 
         if ($function->description !== null && $function->description !== '') {
             $lines[] = '  .withDescription(' . self::quote($function->description) . ')';
@@ -233,12 +235,12 @@ final readonly class DangEntrypointRenderer
         return $line . ')';
     }
 
-    private static function type(ListOfType|Type $type): string
+    private static function type(ListOfType|Type $type, bool $refuseInterfaces = false): string
     {
         $base = $type->nullable ? 'typeDef.withOptional(true)' : 'typeDef';
 
         if ($type instanceof ListOfType) {
-            return "$base.withListOf(" . self::type($type->subtype) . ')';
+            return "$base.withListOf(" . self::type($type->subtype, $refuseInterfaces) . ')';
         }
 
         // The entrypoint declares no dependencies, so the engine would not know a client's types.
@@ -264,10 +266,9 @@ final readonly class DangEntrypointRenderer
                     ? self::schemaName($type->name)
                     : NormalizesClassName::trimLeadingNamespace($type->name),
             ) . ')',
-            TypeDefKind::INTERFACE_KIND => throw new RuntimeException(sprintf(
-                'Currently cannot handle custom interfaces: %s',
-                $type->name,
-            )),
+            TypeDefKind::INTERFACE_KIND => !$refuseInterfaces && $type->isDaggerInterface()
+                ? "$base.withInterface(" . self::quote(NormalizesClassName::trimLeadingNamespace($type->name)) . ')'
+                : throw new RuntimeException(sprintf('Currently cannot handle custom interfaces: %s', $type->name)),
             default => throw new RuntimeException("No support exists for $type->name"),
         };
     }

@@ -65,6 +65,9 @@ class DangEntrypointRendererTest extends TestCase
         yield 'idable object' => ['.withArg("base", typeDef.withObject("Container"))'];
         yield 'enum' => ['typeDef.withEnum("Mode", description: "How fast to go.")'];
         yield 'enum member' => ['.withEnumMember("Fast", value: "fast, really", description: "As fast as it can.")'];
+        yield 'interface' => ['typeDef.withInterface("Shape", description: "Something with an area.")'];
+        yield 'interface function' => ['.withArg("scale", typeDef.withKind(TypeDefKind.INTEGER_KIND), defaultValue: ("1" :: Dagger.JSON!))'];
+        yield 'interface argument' => ['.withArg("shape", typeDef.withInterface("Shape"))'];
         yield 'constructor' => [".withConstructor(\n          function(\"\", typeDef.withObject(\"Main\"))"];
     }
 
@@ -250,6 +253,20 @@ class DangEntrypointRendererTest extends TestCase
 
         self::expectException(RuntimeException::class);
         self::expectExceptionMessage('Currently cannot handle custom interfaces');
+
+        DangEntrypointRenderer::renderTypes($description, 'my-module');
+    }
+
+    #[Test]
+    public function itRefusesInterfaceReturns(): void
+    {
+        $description = new Description([new DaggerObject(
+            name: 'DaggerModule\\MyModule',
+            functions: [new \Dagger\ValueObject\DaggerFunction('shape', null, [], new Type(\DaggerModule\Shape::class))],
+        )]);
+
+        self::expectException(RuntimeException::class);
+        self::expectExceptionMessage('Currently cannot handle custom interfaces: DaggerModule\\Shape');
 
         DangEntrypointRenderer::renderTypes($description, 'my-module');
     }

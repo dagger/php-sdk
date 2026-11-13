@@ -89,6 +89,11 @@ final readonly class DaggerObject
         );
     }
 
+    public function isInterface(): bool
+    {
+        return interface_exists($this->name);
+    }
+
     public function requiresConstruction(): bool
     {
         return ! empty($this->daggerFields);

@@ -288,6 +288,20 @@ The check names the cases as the engine does for the module's target version. Fr
 asks the engine for the names. For a target below `v1.0.0-beta.26`, the check uses the
 earlier naming rules. It also uses them when the engine has no `naming` API.
 
+A PHP interface with `#[DaggerObject]` is a module interface. A module function
+can take a module interface, or a list of one, as an argument. Generation writes a
+class for each module interface into `sdk/generated/ModuleInterfaces/`. The function
+receives the argument as an instance of that class.
+
+Every method of a module interface needs `#[DaggerFunction]`. No method can be
+static or variadic, or be named `id` or `queryLeaf`. A module interface cannot have
+a constant named `GRAPHQL_TYPE`. A function of a module interface takes and returns
+only `bool`, `int`, `float`, `string`, `void` and non-null core objects such as
+`Directory`.
+
+A module function cannot return a module interface. An object field cannot hold a
+module interface. A module interface needs a target from `v1.0.0-beta.26`.
+
 ### Move a module to the entrypoint
 
 No check here runs these steps.
