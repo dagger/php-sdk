@@ -180,4 +180,11 @@ class Main
     {
         return $shape->area();
     }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\ReturnsListOfType(Shape::class)]
+    public function shapes(Shape $shape): array
+    {
+        return [$shape];
+    }
 }

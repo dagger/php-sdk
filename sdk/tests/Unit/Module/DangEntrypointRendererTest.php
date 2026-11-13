@@ -68,6 +68,7 @@ class DangEntrypointRendererTest extends TestCase
         yield 'interface' => ['typeDef.withInterface("Shape", description: "Something with an area.")'];
         yield 'interface function' => ['.withArg("scale", typeDef.withKind(TypeDefKind.INTEGER_KIND), defaultValue: ("1" :: Dagger.JSON!))'];
         yield 'interface argument' => ['.withArg("shape", typeDef.withInterface("Shape"))'];
+        yield 'interface list return' => ['function("shapes", typeDef.withListOf(typeDef.withInterface("Shape")))'];
         yield 'constructor' => [".withConstructor(\n          function(\"\", typeDef.withObject(\"Main\"))"];
     }
 
@@ -258,11 +259,11 @@ class DangEntrypointRendererTest extends TestCase
     }
 
     #[Test]
-    public function itRefusesInterfaceReturns(): void
+    public function itRefusesInterfaceFields(): void
     {
         $description = new Description([new DaggerObject(
             name: 'DaggerModule\\MyModule',
-            functions: [new \Dagger\ValueObject\DaggerFunction('shape', null, [], new Type(\DaggerModule\Shape::class))],
+            fields: [new \Dagger\ValueObject\DaggerField('shape', null, new Type(\DaggerModule\Shape::class))],
         )]);
 
         self::expectException(RuntimeException::class);

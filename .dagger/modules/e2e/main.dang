@@ -838,7 +838,8 @@ type E2e {
 
   """
   A Dang module passes objects of a third module to a PHP function that takes
-  the PHP module's interface, alone and in a list, through dagger call. Loaded
+  the PHP module's interface, alone and in a list, and gets them back, through
+  dagger call. Loaded
   under another name, the PHP module refuses the interface, which the engine
   then names after that name.
   """
@@ -851,6 +852,8 @@ type E2e {
       .withWorkdir("/work/caller")
     let described = call(app, ["call", "describe"])
     assert(described.trimSpace == "square 18;square,circle", "the PHP module should query the caller's objects through its interface: " + described)
+    let returned = call(app, ["call", "returned"])
+    assert(returned.trimSpace == "circle;circle,square", "the PHP module should return the caller's objects through its interface: " + returned)
 
     let aliased = app
       .withWorkdir("/work/alias")
