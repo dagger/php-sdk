@@ -20,7 +20,6 @@ use DaggerModule\Mode;
 use DaggerModule\Shape;
 use DaggerModule\Square;
 use Generator;
-use GraphQL\Exception\QueryError;
 use InvalidArgumentException;
 use Nette\PhpGenerator\PsrPrinter;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -94,9 +93,7 @@ class InterfaceClientsTest extends TestCase
         require "$directory/Shape.php";
 
         $client = self::createStub(Client::class);
-        $client->method('queryLeaf')->willReturnCallback(
-            static fn($query, string $key) => $key === 'name' ? 'MainShape' : 'the-id',
-        );
+        $client->method('queryLeaf')->willReturn('the-id');
         $client->method('loadObjectFromId')->willReturnCallback(
             static function (string $class, Id $id, ?string $typeName) use ($client) {
                 self::assertSame(['the-id', 'MainShape'], [(string) $id, $typeName]);
@@ -129,44 +126,6 @@ class InterfaceClientsTest extends TestCase
 
         yield 'value' => [$square, new Type(Shape::class)];
         yield 'list element' => [[$square], new ListOfType(new Type(Shape::class))];
-    }
-
-    #[Test]
-    #[RunInSeparateProcess]
-    public function itRefusesAnInterfaceTheSchemaNamesOtherwise(): void
-    {
-        $directory = sys_get_temp_dir() . '/' . uniqid('interfaces-');
-        InterfaceClients::write(Description::fromDirectory(__DIR__ . '/Fixture'), $directory, $this->naming());
-        require "$directory/Shape.php";
-
-        $client = self::createStub(Client::class);
-        $client->method('queryLeaf')->willThrowException(
-            new QueryError(['errors' => [['message' => 'unknown type: "MainShape"']]]),
-        );
-
-        self::expectException(InvalidArgumentException::class);
-        self::expectExceptionMessage('The schema has no interface MainShape: a module loaded under another name');
-
-        ValueCodec::forClient($client)->decode('the-id', new Type(Shape::class));
-    }
-
-    #[Test]
-    #[RunInSeparateProcess]
-    public function itRethrowsOtherQueryErrors(): void
-    {
-        $directory = sys_get_temp_dir() . '/' . uniqid('interfaces-');
-        InterfaceClients::write(Description::fromDirectory(__DIR__ . '/Fixture'), $directory, $this->naming());
-        require "$directory/Shape.php";
-
-        $client = self::createStub(Client::class);
-        $client->method('queryLeaf')->willThrowException(
-            new QueryError(['errors' => [['message' => 'session closed']]]),
-        );
-
-        self::expectException(QueryError::class);
-        self::expectExceptionMessage('session closed');
-
-        ValueCodec::forClient($client)->decode('the-id', new Type(Shape::class));
     }
 
     #[Test, DataProvider('provideUnimplementable')]

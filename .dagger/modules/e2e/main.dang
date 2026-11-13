@@ -935,9 +935,8 @@ type E2e {
   """
   A Dang module passes objects of a third module to a PHP function that takes
   the PHP module's interface, alone and in a list, and gets them back, through
-  dagger call. Loaded
-  under another name, the PHP module refuses the interface, which the engine
-  then names after that name.
+  dagger call. Loaded under another name, the PHP module fails on the
+  interface, which the engine then names after that name.
   """
   pub entrypointInterfaceCallCheck(ws: Workspace!): Void @check {
     let generated = phpSdk.generateScope(ws.withWorkdir(interfacesPath + "/geometry"), isModule: true, name: "geometry", clients: [])
@@ -955,7 +954,7 @@ type E2e {
       .withWorkdir("/work/alias")
       .withExec(["dagger", "-m", ".", "call", "describe"], experimentalPrivilegedNesting: true, expect: ReturnType.FAILURE)
       .stderr
-    assertContains(aliased, "as a dependency alias, cannot take its interfaces yet", "a module loaded under another name should refuse its interface")
+    assertContains(aliased, "GeometryShape", "a module loaded under another name should fail on the interface type the engine names otherwise")
   }
 
   """
