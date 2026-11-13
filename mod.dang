@@ -55,10 +55,9 @@ type Mod {
   let globalClientSetting: Boolean
 
   """
-  Whether generation wrote the manifest just before, for a new module: it names
-  the PHP runtime, but the module's code is the template's.
+  Whether generation creates this module, which has no manifest yet.
   """
-  let createdManifest: Boolean!
+  let created: Boolean!
 
   let phpImage: String! = "php:8.4-cli-alpine@sha256:ef24d42ed7297dc8c9a6672988594c5f18702a434b3af48a3128fed8d2569746"
   let composerImage: String! = "composer/composer:2.8-bin@sha256:c735b6a52ea118693178babc601984dbbbd07f1d31ec87eaa881173622b467ed"
@@ -117,7 +116,7 @@ type Mod {
   refuses a module with dependencies.
   """
   pub usesEntrypoint: Boolean! {
-    let ours = if (hasEntrypoint) { ownsEntrypoint } else { runtimeSource == "php" }
+    let ours = if (hasEntrypoint) { ownsEntrypoint } else { created or runtimeSource == "php" }
     if (ours == false) {
       false
     } else {
@@ -445,7 +444,7 @@ type Mod {
   What a refusal names: the module, or the PHP program of a scope without one.
   """
   let label: String! {
-    if (fileExists("dagger-module.toml") or fileExists("dagger.json")) { "module at " + rootPath } else { "PHP program at " + rootPath }
+    if (created or fileExists("dagger-module.toml") or fileExists("dagger.json")) { "module at " + rootPath } else { "PHP program at " + rootPath }
   }
 
   """
@@ -482,11 +481,11 @@ type Mod {
   """
   Whether generation writes the global client, dag(): the globalClient setting,
   or, unset, whether the code may call it. Code the built-in PHP runtime ran
-  does, unless generation just wrote its manifest. So does code whose sdk/ has
+  does. So does code whose sdk/ has
   dag(): in dag.php, or in functions.php as releases before the setting wrote it.
   """
   let writesGlobalClient: Boolean! {
-    let onRuntime = createdManifest == false and hasEntrypoint == false and runtimeSource == "php"
+    let onRuntime = hasEntrypoint == false and runtimeSource == "php"
     # Migration shim: releases before globalClient defined dag() in functions.php.
     # Drop it once no module keeps an sdk/ from those releases.
     let earlier = fileExists("sdk/src/functions.php") and contentsOf("sdk/src/functions.php").contains("function dag(")

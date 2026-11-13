@@ -71,18 +71,8 @@ type PhpSDK {
       # Mod.rootPath is workspace-root-relative, so the scope is generated from
       # the root and the cwd restored afterwards: the engine rejects a result
       # whose cwd is not the scope.
-      let rooted = ws.withWorkdir(".")
       let created = hasModuleConfig(ws, scope) == false
-      let initialized = if (created == false) {
-        rooted
-      } else {
-        sdkHelpers.moduleManifest
-          .withName(name: name)
-          .withLegacyRuntime(runtime: "php", engineVersion: targetEngineVersion)
-          .generate(rooted.withWorkdir(scope), legacyJson: false)
-          .withWorkdir(".")
-      }
-      modAt(scope, initialized, name, subject: "module \"" + name + "\"", clients: clients, created: created).generated.withWorkdir(scope)
+      modAt(scope, ws.withWorkdir("."), name, subject: "module \"" + name + "\"", clients: clients, created: created).generated.withWorkdir(scope)
     }
   }
 
@@ -129,7 +119,7 @@ type PhpSDK {
       declaresLaterEngine: declaresLaterEngine(ws, path),
       clients: clients,
       globalClientSetting: globalSetting,
-      createdManifest: created,
+      created: created,
     )
   }
 
