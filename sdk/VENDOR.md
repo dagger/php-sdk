@@ -30,6 +30,9 @@ Local changes to the vendored files:
   factory per kind of mistake instead of one per role, and
   `tests/Unit/ValueObject/DaggerFunctionTest.php` runs the shared rule over a
   provider of roles.
+- `src/functions.php` requires `src/dag.php` when the file is there, which
+  generation keeps only for a module with the global client, and disables the
+  PSR-1 side-effects sniff that this `require_once` beside a function trips.
 - `composer.json` autoloads the `DaggerModule` namespace of the test fixtures for
   development.
 - `src/Command/EntrypointCommand.php`, which no console registers, and its only

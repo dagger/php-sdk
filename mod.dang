@@ -461,12 +461,7 @@ type Mod {
         include: ["src/**", "scripts/**", "bin/**", "composer.json", "composer.lock", "LICENSE"],
       )
       .withWorkdir("/sdk")
-    let autoloaded = if (writesGlobalClient) {
-      library.withExec(["php", "-r", "$c = json_decode(file_get_contents('composer.json'), true, flags: JSON_THROW_ON_ERROR); $c['autoload']['files'][] = 'src/dag.php'; file_put_contents('composer.json', json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . \"\\n\");"])
-    } else {
-      library.withoutFile("src/dag.php")
-    }
-    let core = autoloaded
+    let core = (if (writesGlobalClient) { library } else { library.withoutFile("src/dag.php") })
       .withExec(["composer", "install", "--no-dev"])
       .withMountedFile("/schema.json", clientSchema)
       .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])

@@ -75,10 +75,10 @@ return core()->container()->from('alpine:3.24');
 ### Global client
 
 Code written for the built-in PHP runtime calls the global client,
-`Dagger\dag()`. Generation writes `sdk/src/dag.php`, which defines `dag()`, and
-autoloads it from `sdk/composer.json` when the module is on the built-in runtime
-(`[runtime] source = "php"`, or `"sdk": {"source": "php"}` in a legacy
-`dagger.json`) or its `sdk/` already has `dag()`, in `dag.php` or in the
+`Dagger\dag()`, which `sdk/src/dag.php` defines and `sdk/src/functions.php`
+loads when the file is there. Generation keeps the file when the module is on the
+built-in runtime (`[runtime] source = "php"`, or `"sdk": {"source": "php"}` in a
+legacy `dagger.json`) or its `sdk/` already has `dag()`, in `dag.php` or in the
 `functions.php` an earlier release of this SDK wrote. A new module does not get
 it.
 
