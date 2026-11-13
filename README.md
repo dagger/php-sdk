@@ -172,8 +172,11 @@ of the following keeps the runtime in its manifest and gets no `dang.toml`:
 - a Composer `vendor-dir` other than `vendor`
 - a runtime other than `php`
 
-To move such a module, remove what keeps it there and run `dagger generate`. A
-custom entrypoint stays as it is.
+To move such a module, remove what keeps it there and run `dagger generate`.
+[Move a module to the entrypoint](#move-a-module-to-the-entrypoint) gives the
+steps for the layouts that need more than that. This SDK does not move a module
+with a runtime other than `php`, or with an entrypoint it did not write, to the
+generated entrypoint.
 
 A module without `composer.json` also moves to the entrypoint. Generation first
 adds the starter template's files that the module does not have, as the engine's
@@ -234,6 +237,51 @@ The check names the cases as the engine does for the module's target version. Fr
 `BASE64` collide there and `Base64` and `BASE_64` do not. For such a target, generation
 asks the engine for the names. For a target below `v1.0.0-beta.26`, the check uses the
 earlier naming rules. It also uses them when the engine has no `naming` API.
+
+### Move a module to the entrypoint
+
+No check here runs these steps.
+
+A module whose `source` is not the module directory keeps the runtime. The
+generated entrypoint builds from the module directory, and a version 2 manifest
+has no `source` key. To move the module:
+
+1. Move the files of the source directory, such as `composer.json`,
+   `composer.lock` and `src/`, into the module directory.
+2. Remove `source` from `dagger-module.toml`.
+3. Run `dagger generate`.
+
+Moving `dagger-module.toml` into the source directory, and removing `source` from
+it, also moves the module. That changes the module's directory, which
+`dagger.toml` records for the module's scope. This README does not cover updating
+`dagger.toml` after such a move. Moving the files up, as in the steps above, keeps
+the module's directory.
+
+A module whose `composer.json` sets `config.vendor-dir` to a directory other than
+`vendor` keeps the runtime. The generated entrypoint loads `vendor/autoload.php`.
+To move the module:
+
+1. Remove `config.vendor-dir` from `composer.json`.
+2. Run `dagger generate`.
+
+A module whose `include` or `exclude` pattern keeps the runtime needs the pattern
+changed. To move the module:
+
+1. Change an `include` glob outside the module to the directory it reads, such as
+   `../lib` for `../lib/*.php`. The module then loads every file of that
+   directory, not only the files the glob matched.
+2. Remove an exclusion outside the module.
+3. Check which files each exclusion matches. The next step makes the build leave
+   out every one of them.
+4. Remove a plain `include` pattern that follows an exclusion, unless it names a
+   directory beside the module.
+5. Run `dagger generate`.
+
+A module with an entrypoint this SDK did not write keeps that entrypoint.
+Generation does not change the entrypoint, and the engine runs it as written. A
+module in a PHP scope whose runtime is not `php` keeps that runtime. `dagger
+generate` applies that runtime's code generation, and this SDK adds no files of
+its own.
 
 ### Git
 
