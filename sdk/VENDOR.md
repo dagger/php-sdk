@@ -28,6 +28,9 @@ Local changes to the vendored files:
   says so.
 - `composer.json` autoloads the `DaggerModule` namespace of the test fixtures for
   development.
+- `src/Command/EntrypointCommand.php`, which no console registers, and its only
+  helpers `src/Service/FindsSrcDirectory.php` and `src/Service/DecodesValue.php`
+  are removed with their tests: `bin/dagger-module` runs modules.
 
 Files this repository adds, which have no counterpart in dagger/dagger:
 

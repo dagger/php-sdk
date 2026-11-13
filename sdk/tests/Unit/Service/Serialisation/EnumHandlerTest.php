@@ -100,7 +100,7 @@ class EnumHandlerTest extends TestCase
     }
 
     /**
-     * EntrypointCommand serialises the parent object between calls, so in
+     * ValueCodec serialises the module object between calls, so in
      * practice enums travel nested inside another object rather than alone.
      */
     #[Test]

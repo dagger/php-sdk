@@ -22,8 +22,7 @@ use ReflectionProperty;
 use stdClass;
 
 /**
- * Decodes values that json_decode has already made structural, unlike
- * DecodesValue, which splits the JSON text of a list on its commas.
+ * Decodes values that json_decode has already made structural.
  */
 final readonly class ValueCodec
 {
