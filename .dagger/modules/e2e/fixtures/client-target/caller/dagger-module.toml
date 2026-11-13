@@ -3,3 +3,11 @@ engineVersion = "v1.0.0-beta.27"
 
 [runtime]
 source = "php"
+
+[[dependencies]]
+name = "file-lister"
+source = "../lister"
+
+[[dependencies]]
+name = "file-maker"
+source = "../maker"

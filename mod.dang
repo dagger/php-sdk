@@ -112,29 +112,141 @@ type Mod {
   """
   Whether generation writes the entrypoint this SDK owns. A module with an
   entrypoint of its own, a runtime other than PHP's, or a configuration the
-  entrypoint cannot preserve keeps the path the engine drives. The engine reads
-  a manifest with an entrypoint, dependencies and a runtime as a runtime
-  manifest, and refuses one without the runtime.
+  entrypoint cannot preserve keeps the path the engine drives. A direct mod call
+  does not know the scope's clients, which provide the dependencies, so a module
+  with dependencies keeps that path there too. The engine reads a manifest with an
+  entrypoint, dependencies and a runtime as a runtime manifest.
   """
   pub usesEntrypoint: Boolean! {
+    let keepsDependencies = declares("dependencies") and clients == null
     if (hasEntrypoint) {
       if (ownsEntrypoint == false) {
         false
-      } else if (declares("dependencies")) {
+      } else if (keepsDependencies) {
         if (runtimeSource == "") {
-          raise "module at " + rootPath + " has an entrypoint and dependencies without a runtime, and an entrypoint has no dependency list: restore [runtime] source = \"php\" to keep the dependencies, or remove them"
+          raise "module at " + rootPath + " has an entrypoint and dependencies without a runtime, and a direct generation does not know the clients of its scope, which provide the dependencies: run dagger generate, restore [runtime] source = \"php\" to keep the dependencies, or remove them"
         }
         false
       } else if (entrypointBlockers.length > 0) {
         raise "module at " + rootPath + " cannot keep its generated entrypoint: " + entrypointBlockers.join("; ")
       } else {
+        checkDependenciesAreClients
         true
       }
     } else if (runtimeSource != "php") {
       false
+    } else if (keepsDependencies or declaresLaterEngine or entrypointBlockers.length > 0) {
+      false
     } else {
-      declares("dependencies") == false and declaresLaterEngine == false and entrypointBlockers.length == 0
+      checkDependenciesAreClients
+      true
     }
+  }
+
+  """
+  Refuse a dependency of the manifest that no client of the scope provides. The
+  generated entrypoint reaches a dependency only through its client, the
+  manifest drops the dependencies, and only the engine writes the scope's
+  clients into dagger.toml. client add resolves a local path from the cwd
+  (dagger/dagger v1.0.0-beta.27, core/schema resolveWorkspaceClientModuleInput),
+  so each command runs from the module directory.
+  """
+  let checkDependenciesAreClients: Void {
+    let entries = if (declares("dependencies")) { rawEntries(manifest.field(["dependencies"])) } else { [] :: [String!]! }
+    let missing = entries.map { raw => dependencyRef(raw) }.filter { ref => knownClients.filter { client => providesDependency(client, ref) }.length == 0 }
+    if (missing.length > 0) {
+      let commands = missing.map { ref =>
+        let marked = isGitRef(ref) or ref.hasPrefix(".") or ref.hasPrefix("/")
+        "  dagger module client add " + (if (marked) { ref } else { "./" + ref })
+      }
+      raise label + " has dependencies that no client of its scope provides, matching by source and Git version or pin, not by name. From the module directory, add each client, or remove the dependency:\n" + commands.join("\n")
+    }
+    null
+  }
+
+  """
+  Whether a client is the module a dependency's ref names, by source. Git refs
+  compare by gitIdentity, and a version matches the client's version or pin,
+  because the engine records a migrated dependency at its pin (dagger/dagger
+  v1.0.0-beta.27, core/workspace/legacy.go legacyWorkspaceModuleSource).
+  """
+  let providesDependency(client: ModuleSource!, ref: String!): Boolean! {
+    let subpath = normalized(client.sourceRootSubpath)
+    if (client.kind != ModuleSourceKind.GIT_SOURCE) {
+      let base = if (ref.hasPrefix("/")) { "." } else { rootPath }
+      return isGitRef(ref) == false and subpath == normalized(base + "/" + ref)
+    }
+    let identity = gitIdentity(ref)
+    let repository = gitIdentity(client.cloneRef)
+    let sub = if (subpath == ".") { "" } else { subpath }
+    let expected = if (identity.contains("//")) { repository + "//" + sub } else { (repository + "/" + sub).trimSuffix("/") }
+    let version = gitVersion(ref)
+    isGitRef(ref) and identity != "" and identity == expected and (version == "" or version == client.version or version == client.pin)
+  }
+
+  """
+  A dependency's source, at its pin in place of its version when it has one: the
+  pin is the commit itself, whatever version the source names.
+  """
+  let dependencyRef(raw: String!): String! {
+    let source = dependencySource(raw)
+    let pin = stringField(parsedJson(raw), "pin")
+    if (pin == "") { return source }
+    let version = gitVersion(source)
+    (if (version == "") { source } else { source.trimSuffix("@" + version) }) + "@" + pin
+  }
+
+  """
+  A Git ref as host/path, without its version, scheme, user, port or a trailing
+  /, and with the host in lower case: https://, ssh:// and host:path spell one
+  repository alike. A ".git" segment ends the repository, so it becomes "//"
+  before the subpath, or nothing at the end. Empty for a fragment selector,
+  which is not compared, so such a dependency is refused.
+  """
+  let gitIdentity(ref: String!): String! {
+    if (ref.contains("#")) { return "" }
+    let path = gitWithoutUser(ref).split("@")[0] ?? ""
+    let first = path.split("/")[0] ?? ""
+    let hostPort = first.split(":")
+    let scp = hostPort.length == 2 and (hostPort[1] ?? "").containsMatch("^[0-9]+$") == false
+    let rest = (if (scp) { [hostPort[1] ?? ""] } else { [] :: [String!]! }) + path.split("/").dropFirst(1)
+    let flat = ((hostPort[0] ?? "").toLower + "/" + rest.join("/")).trimSuffix("/")
+    let repository = flat.split(".git/")
+    if (repository.length > 1) { (repository[0] ?? "") + "//" + repository.dropFirst(1).join(".git/") } else { flat.trimSuffix(".git") }
+  }
+
+  """
+  The version after the first @ past the scheme and user, which can hold a /,
+  as feature/foo does.
+  """
+  let gitVersion(ref: String!): String! {
+    gitWithoutUser(ref).split("@").dropFirst(1).join("@")
+  }
+
+  let gitWithoutUser(ref: String!): String! {
+    ref.replaceMatches("^[a-z][a-z0-9+.-]*://", "").replaceMatches("^[^/@:]*@", "")
+  }
+
+  """
+  A dependency's source. A dependency of a legacy dagger.json can be the source
+  string alone.
+  """
+  let dependencySource(raw: String!): String! {
+    if (raw.trimSpace.hasPrefix("\"")) { parsedJson(raw).asString } else { stringField(parsedJson(raw), "source") }
+  }
+
+  """
+  Whether a module source is a Git ref, by the engine's heuristic: unless it
+  starts with a path marker, the host before the first slash has a dot or a
+  colon (dagger/dagger v1.0.0-beta.27, core/workspace/localref.go IsLocalRef).
+  """
+  let isGitRef(source: String!): Boolean! {
+    if (source == "." or source == ".." or source.hasPrefix("./") or source.hasPrefix("../") or source.hasPrefix("/")) {
+      return false
+    }
+    let first = source.split("/")[0] ?? ""
+    let host = first.split("@")[1] ?? first
+    host.contains(".") or host.contains(":")
   }
 
   """
@@ -467,7 +579,8 @@ type Mod {
   A module migrating from the runtime loses what only a runtime reads, except
   its include patterns, which every generation translates again. A module
   already on the entrypoint keeps a runtime it names for older engines, which
-  read such a manifest as a runtime manifest, include and all. From
+  read such a manifest as a runtime manifest, include and all. Both lose their
+  dependencies, which the scope's clients provide; see usesEntrypoint. From
   v1.0.0-beta.26 a lone include replaces sources, so it also lists the outside
   directories that sources would return, before the patterns.
 
@@ -478,7 +591,7 @@ type Mod {
   let withManifest(target: Workspace!): Workspace! {
     let loaded = sdkHelpers.loadModuleManifest(ws.withWorkdir(".").withWorkdir(rootPath))
     let namesRuntime = hasEntrypoint and runtimeSource != ""
-    let base = if (namesRuntime) { loaded } else { loaded.withoutLegacyFields }
+    let base = if (namesRuntime) { loaded.withoutLegacyRuntimeDependencies } else { loaded.withoutLegacyFields }
     let written = base
       .withName(name: moduleName)
       .withDangEntrypoint(source: "./" + entrypointPath)
