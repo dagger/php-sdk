@@ -4,19 +4,11 @@ declare(strict_types=1);
 
 namespace Dagger\Tests\Unit\Codegen;
 
-use Dagger\Client\ModuleTarget;
 use Dagger\Codegen\Codegen;
 use Dagger\Codegen\Introspection\IntrospectionSchema;
-use Dagger\Connection;
-use Dagger\Dagger;
-use GraphQL\Client as GqlClient;
-use GraphQL\Results;
 use org\bovigo\vfs\vfsStream;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
-use PHPUnit\Framework\Attributes\PreserveGlobalState;
-use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -92,6 +84,7 @@ class CodegenTest extends TestCase
         self::assertStringContainsString('final class Client' . "\n", $client);
         self::assertStringContainsString('public static function myLinter(?string $client = null): MyLinter', $client);
         self::assertStringContainsString('new \Dagger\Clients\MyLinter\MyLinter(', $client);
+        self::assertStringContainsString("\$__client->serve('" . self::ADDRESS . "', '" . self::PIN . "');", $client);
         self::assertStringNotContainsString('function container(', $client);
         self::assertStringNotContainsString('$this', $client);
 
@@ -159,84 +152,11 @@ class CodegenTest extends TestCase
         $this->generate($schema, 'list');
     }
 
-    #[Test]
-    #[RunInSeparateProcess]
-    #[PreserveGlobalState(false)]
-    #[DataProvider('pins')]
-    public function twoEntryCallsServeTheTargetOnce(?string $pin, string $serve): void
-    {
-        [$queries, $linter] = $this->callEntryTwice($pin, failures: 0);
-
-        self::assertCount(1, $queries);
-        self::assertStringContainsString($serve, $queries[0]);
-        self::assertStringContainsString(
-            'myLinter(client: "mine")',
-            (fn () => (string) $this->queryBuilderChain->getFullQuery())->call($linter),
-        );
-    }
-
-    public static function pins(): iterable
-    {
-        yield 'pinned' => [self::PIN, 'serveModule(address: "' . self::ADDRESS . '" refPin: "' . self::PIN . '")'];
-        yield 'unpinned' => [null, 'serveModule(address: "' . self::ADDRESS . '")'];
-    }
-
-    #[Test]
-    #[RunInSeparateProcess]
-    #[PreserveGlobalState(false)]
-    public function aFailedServeIsTriedAgain(): void
-    {
-        [$queries] = $this->callEntryTwice(self::PIN, failures: 1);
-
-        self::assertCount(2, $queries);
-        self::assertSame($queries[0], $queries[1]);
-    }
-
-    /**
-     * Each caller runs in a process of its own: the generated classes and the shared client stay
-     * defined for the rest of the process.
-     *
-     * @return array{string[], object} the queries two entry calls send, and the second call's result
-     */
-    private function callEntryTwice(?string $pin, int $failures): array
-    {
-        $this->generate(self::schema(), null);
-        $this->generate(self::schema(), 'my-linter', new ModuleTarget(self::ADDRESS, $pin));
-        require $this->root . '/' . self::CLIENT_DIR . '/Client.php';
-        require $this->root . '/' . self::CLIENT_DIR . '/MyLinter.php';
-
-        $queries = [];
-        $graphQl = self::createStub(GqlClient::class);
-        $graphQl->method('runQuery')->willReturnCallback(
-            function ($query) use (&$queries, &$failures): Results {
-                $queries[] = (string) $query->getQuery();
-                if ($failures-- > 0) {
-                    throw new RuntimeException('the engine refused to serve the module');
-                }
-                $results = self::createStub(Results::class);
-                $results->method('getData')->willReturn(['serveModule' => null]);
-                return $results;
-            },
-        );
-        $connection = self::createStub(Connection::class);
-        $connection->method('connect')->willReturn($graphQl);
-        (new \ReflectionProperty(Dagger::class, 'client'))->setValue(null, new \Dagger\Client($connection));
-
-        $linter = null;
-        for ($call = 0; $call < 2; $call++) {
-            try {
-                $linter = \Dagger\Clients\MyLinter\Client::myLinter('mine');
-            } catch (RuntimeException) {
-            }
-        }
-        return [$queries, $linter];
-    }
-
-    private function generate(IntrospectionSchema $schema, ?string $module, ?ModuleTarget $target = null): void
+    private function generate(IntrospectionSchema $schema, ?string $module): void
     {
         $io = new SymfonyStyle(new ArrayInput([]), new NullOutput());
-        $target ??= $module === null ? null : new ModuleTarget(self::ADDRESS, self::PIN);
-        (new Codegen($schema, $this->root, $io, $module, $target))->generate();
+        $address = $module === null ? null : self::ADDRESS;
+        (new Codegen($schema, $this->root, $io, $module, $address, $address === null ? null : self::PIN))->generate();
     }
 
     /**

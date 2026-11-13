@@ -10,7 +10,6 @@ use Dagger\Client\AbstractInputObject;
 use Dagger\Client\AbstractObject;
 use Dagger\Client\AbstractScalar;
 use Dagger\Client\IdAble;
-use Dagger\Client\ModuleTarget;
 use Dagger\Codegen\CodeWriter;
 use Nette\PhpGenerator\ClassType;
 use Nette\PhpGenerator\EnumType;
@@ -33,7 +32,8 @@ class NewCodegenVisitor extends CodeWriter
         private readonly array $interfaceNames = [],
         string $namespace = CodeWriter::NAMESPACE,
         private readonly array $classNamespaces = [],
-        private readonly ?ModuleTarget $target = null,
+        private readonly ?string $address = null,
+        private readonly ?string $pin = null,
     ) {
         parent::__construct($targetDirectory, $namespace);
     }
@@ -108,7 +108,7 @@ class NewCodegenVisitor extends CodeWriter
 
     public function visitObject(IntrospectionType $type): void
     {
-        if ($type->name === 'Query' && $this->target !== null) {
+        if ($type->name === 'Query' && $this->address !== null) {
             $this->visitEntry($type);
             return;
         }
@@ -167,8 +167,8 @@ class NewCodegenVisitor extends CodeWriter
             $method->setBody('');
             $method->addBody('$__client = \Dagger\Dagger::getClientInstance();');
             $method->addBody(
-                '$__client->serve(new \Dagger\Client\ModuleTarget(?, ?));',
-                [$this->target->address, $this->target->pin],
+                '$__client->serve(?, ?);',
+                [$this->address, $this->pin],
             );
             $method->addBody($rootBody);
         }

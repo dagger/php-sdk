@@ -20,7 +20,7 @@ abstract class AbstractClient
     protected GqlClient $graphQlClient;
 
     /** @var array<string, true> */
-    private array $servedTargets = [];
+    private array $served = [];
 
     public function __construct(
         Connection|Client $clientOrConnection,
@@ -59,22 +59,23 @@ abstract class AbstractClient
     }
 
     /**
-     * Serve the target's module in this client's session, once. A failed serve
-     * is not recorded, so the next call tries again.
+     * Serve the module at an address, at the commit a Git address is pinned to,
+     * in this client's session, once. A failed serve is not recorded, so the
+     * next call tries again.
      */
-    public function serve(ModuleTarget $target): void
+    public function serve(string $address, ?string $pin = null): void
     {
-        $key = json_encode([$target->address, $target->pin]);
-        if (isset($this->servedTargets[$key])) {
+        $key = json_encode([$address, $pin]);
+        if (isset($this->served[$key])) {
             return;
         }
         $serveModule = new \Dagger\Client\QueryBuilder('serveModule');
-        $serveModule->setArgument('address', $target->address);
-        if ($target->pin !== null) {
-            $serveModule->setArgument('refPin', $target->pin);
+        $serveModule->setArgument('address', $address);
+        if ($pin !== null) {
+            $serveModule->setArgument('refPin', $pin);
         }
         $this->queryLeaf($serveModule, 'serveModule');
-        $this->servedTargets[$key] = true;
+        $this->served[$key] = true;
     }
 
     /**

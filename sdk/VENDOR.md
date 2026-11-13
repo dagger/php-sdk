@@ -16,8 +16,8 @@ Local changes to the vendored files:
   partition the schema by `@sourceMap(module:)`. Without `--client`, it generates what
   no module contributes. `--client <module>` generates what the module contributes into
   `generated/Clients/<Name>/`, in namespace `Dagger\Clients\<Name>`.
-- `src/Client/AbstractClient.php` gains `serve`, which sends `serveModule` once per
-  target. `src/Codegen/Introspection/NewCodegenVisitor.php`, `src/Codegen/Codegen.php`
+- `src/Client/AbstractClient.php` gains `serve(address, pin)`, which sends
+  `serveModule` once per address and pin in a session, and again after a failure. `src/Codegen/Introspection/NewCodegenVisitor.php`, `src/Codegen/Codegen.php`
   and `src/Command/CodegenCommand.php` generate a client's `Query` fields as static
   methods of `Dagger\Clients\<Name>\Client`, which serve the target given by
   `--address` and `--pin` on the shared `Dagger::getClientInstance()`.
@@ -38,7 +38,7 @@ Local changes to the vendored files:
 
 Files this repository adds, which have no counterpart in dagger/dagger:
 
-- `src/Module/`, `src/Client/ModuleTarget.php`, `bin/dagger-module`, `tests/Unit/Module/`,
+- `src/Module/`, `bin/dagger-module`, `tests/Unit/Module/`, `tests/Unit/Client/`,
   `tests/Unit/Codegen/CodegenTest.php`, `tests/Unit/Codegen/Fixture/` and this file.
 
 `.gitignore` replaces the upstream one: it ignores `vendor/`, `generated/` and `.cache/`,
@@ -47,8 +47,8 @@ not the upstream tree's tooling files.
 `phpcs.xml.dist` replaces the upstream `phpcs.xml`: it also checks `tests/Unit/Module/`.
 
 `phpstan.dist.neon` differs from the upstream file: it also analyses `tests/Unit/Module/`.
-The baseline holds the two errors that upstream records in `src/Client/`.
-`src/Client/` is unchanged from upstream.
+The baseline holds the two errors that upstream records in `src/Client/`. Apart
+from `serve`, `src/Client/` is unchanged from upstream.
 
 `generated/` is not committed. `Mod` generates it for each module from the schema
 of `PhpSDK.targetEngineVersion`, and the e2e module generates it for the unit

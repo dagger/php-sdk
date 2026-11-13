@@ -286,7 +286,7 @@ type E2e {
     assertContains(entry, "namespace Dagger\\Clients\\FileLister;", "a client should generate into its namespace")
     assertContains(entry, "function fileLister(", "the entry class should have the target's constructor")
     assertNotContains(entry, "dag(", "a client should not use the global client")
-    assertContains(entry, "ModuleTarget('/" + clientTargetPath + "', null)", "a local client should serve its module from the workspace root, without a pin")
+    assertContains(entry, "serve('/" + clientTargetPath + "', null)", "a local client should serve its module from the workspace root, without a pin")
     assert(exists(both, clientsDir + "/FileLister/FileLister.php"), "the client's type should be generated")
     assert(exists(both, clientsDir + "/FileMaker/Client.php"), "every client should be generated")
     assert(exists(both, entrypointModulePath + "/sdk/generated/Client.php"), "core should still be generated")

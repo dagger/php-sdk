@@ -2,7 +2,6 @@
 
 namespace Dagger\Command;
 
-use Dagger\Client\ModuleTarget;
 use Dagger\Codegen\Codegen;
 use Dagger\Codegen\Introspection\IntrospectionSchema;
 use Dagger\Codegen\SchemaGenerator;
@@ -72,7 +71,6 @@ class CodegenCommand extends Command
         if (($module === null) !== ($address === null) || ($module === null && $input->getOption('pin') !== null)) {
             throw new InvalidArgumentException('--client needs --address, and --address and --pin need --client');
         }
-        $target = $address === null ? null : new ModuleTarget($address, $input->getOption('pin'));
 
         if ($input->getOption('schema-file') !== null && file_exists($input->getOption('schema-file'))) {
             $fileContents = file_get_contents($input->getOption('schema-file'));
@@ -83,7 +81,7 @@ class CodegenCommand extends Command
             $schema = (new SchemaGenerator($client))->getSchema();
         }
 
-        $codegen = new Codegen($schema, self::WRITE_DIR, $io, $module, $target);
+        $codegen = new Codegen($schema, self::WRITE_DIR, $io, $module, $address, $input->getOption('pin'));
         $codegen->generate();
 
         return Command::SUCCESS;
