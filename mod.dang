@@ -81,18 +81,17 @@ type Mod {
 
   """
   Generate this module.
-  If the generate skip marker is present, the changeset is empty.
+  If the generate skip marker is present, the changeset is empty. So is it for a
+  module with an entrypoint of its own or a runtime other than PHP's.
   """
   pub generate: Changeset! {
     if (skipGenerate) {
       changeset
+    } else if (usesEntrypoint) {
+      let cwd = ws.cwd.trimPrefix("/")
+      entrypointGenerated.withWorkdir(if (cwd == "") { "." } else { cwd }).changes(ws)
     } else {
-      if (usesEntrypoint) {
-        let cwd = ws.cwd.trimPrefix("/")
-        entrypointGenerated.withWorkdir(if (cwd == "") { "." } else { cwd }).changes(ws)
-      } else {
-        legacyChanges
-      }
+      changeset
     }
   }
 
@@ -105,39 +104,35 @@ type Mod {
     } else if (usesEntrypoint) {
       entrypointGenerated
     } else {
-      ws.withChanges(legacyChanges).withWorkdir(".")
+      ws.withWorkdir(".")
     }
   }
 
   """
   Whether generation writes the entrypoint this SDK owns. A module with an
-  entrypoint of its own, a runtime other than PHP's, or a configuration the
-  entrypoint cannot preserve keeps the path the engine drives. A direct mod call
-  does not know the scope's clients, which provide the dependencies, so a module
-  with dependencies keeps that path there too. The engine reads a manifest with an
-  entrypoint, dependencies and a runtime as a runtime manifest.
+  entrypoint of its own or a runtime other than PHP's is not this SDK's to
+  generate. A module on the PHP runtime that the entrypoint cannot run is
+  refused, because this SDK no longer has the engine generate it. A direct mod
+  call does not know the scope's clients, which provide the dependencies, so it
+  refuses a module with dependencies.
   """
   pub usesEntrypoint: Boolean! {
-    let keepsDependencies = declares("dependencies") and clients == null
-    if (hasEntrypoint) {
-      if (ownsEntrypoint == false) {
-        false
-      } else if (keepsDependencies) {
-        if (runtimeSource == "") {
-          raise "module at " + rootPath + " has an entrypoint and dependencies without a runtime, and a direct generation does not know the clients of its scope, which provide the dependencies: run dagger generate, restore [runtime] source = \"php\" to keep the dependencies, or remove them"
-        }
-        false
-      } else if (entrypointBlockers.length > 0) {
-        raise "module at " + rootPath + " cannot keep its generated entrypoint: " + entrypointBlockers.join("; ")
-      } else {
-        checkDependenciesAreClients
-        true
-      }
-    } else if (runtimeSource != "php") {
-      false
-    } else if (keepsDependencies or declaresLaterEngine or entrypointBlockers.length > 0) {
+    let ours = if (hasEntrypoint) { ownsEntrypoint } else { runtimeSource == "php" }
+    if (ours == false) {
       false
     } else {
+      let direct = if (declares("dependencies") and clients == null) { ["it has dependencies, and a direct generation does not know the clients of its scope, which provide them: run dagger generate"] } else { [] :: [String!]! }
+      # The engine ignores a generated entrypoint's manifest engineVersion.
+      let later = if (declaresLaterEngine and hasEntrypoint == false) { ["its engineVersion is later than " + targetEngineVersion] } else { [] :: [String!]! }
+      let read = direct + later + entrypointBlockers
+      # generatedBlockers runs Composer and reflection, so it waits until nothing cheaper refuses.
+      let blockers = if (read.length > 0) { read } else { generatedBlockers }
+      if (blockers.length > 0) {
+        if (hasEntrypoint) {
+          raise label + " cannot keep its generated entrypoint: " + blockers.join("; ")
+        }
+        raise label + " is on the PHP runtime, which this SDK no longer generates, and cannot move to the generated entrypoint: " + blockers.join("; ") + ". See \"Migrate from the built-in PHP runtime\" in the php-sdk README"
+      }
       checkDependenciesAreClients
       true
     }
@@ -576,8 +571,9 @@ type Mod {
   }
 
   """
-  A module migrating from the runtime loses what only a runtime reads, except
-  its include patterns, which every generation translates again. A module
+  A module migrating from the runtime loses its runtime and engineVersion,
+  which only a runtime reads, and keeps its include patterns, which every
+  generation translates again. A module
   already on the entrypoint keeps a runtime it names for older engines, which
   read such a manifest as a runtime manifest, include and all. Both lose their
   dependencies, which the scope's clients provide; see usesEntrypoint. From
@@ -777,7 +773,8 @@ type Mod {
   }
 
   """
-  Why the generated entrypoint cannot run this module. The entrypoint builds from
+  Why the generated entrypoint cannot run this module, read from its files
+  without generating it; generatedBlockers holds the rest. The entrypoint builds from
   the module's own directory and the Composer paths outside it that sources
   returns, so other files outside that directory, or settings that change what
   it loads, are not preserved.
@@ -792,8 +789,7 @@ type Mod {
     let cachingBlocker = if (cachingDisabled) { ["it sets disableDefaultFunctionCaching"] } else { [] :: [String!]! }
     let source = stringField(manifest, "source").trimPrefix("./").trimSuffix("/")
     let sourceBlocker = if (source == "" or source == ".") { [] :: [String!]! } else { ["its source is " + source] }
-    let others = declared + cachingBlocker + sourceBlocker + composerBlockers + includeBlockersFrom(0, false) + outsideFiles
-    if (others.length > 0) { others } else { generatedBlockers }
+    declared + cachingBlocker + sourceBlocker + composerBlockers + includeBlockersFrom(0, false) + outsideFiles
   }
 
   """
@@ -842,7 +838,7 @@ type Mod {
   first against composer.json and composer.lock, which generation itself needs,
   and against sdk/ as a whole, then against the sdk/ generation writes, through
   the same exclude matching as the build. Generating that sdk/ is what migration
-  does next, so it runs only when no other blocker keeps the runtime.
+  does next, so it runs only when no other reason refuses the module.
   """
   let generatedBlockers: [String!]! {
     if (excludedPatterns.length == 0) { return [] :: [String!]! }
@@ -928,7 +924,7 @@ type Mod {
   """
   The outside paths that are directories. Generation mounts each one, and the
   entrypoint's sources returns it, so the engine loads it with the module. A
-  file is neither: a module with one keeps the runtime, and a program's
+  file is neither: a module with one is refused, and a program's
   composer update does not read an autoload file.
   """
   let outsideDirectories: [String!]! {
@@ -1147,54 +1143,5 @@ type Mod {
   let contentsOf(path: String!): String! {
     let full = modulePath(path)
     ws.directory("/", include: [full]).file(full).contents
-  }
-
-  """
-  The engine's changes to this module. Its runtime path replaces sdk/, so a
-  dang.toml of the entrypoint this module also names would go with it; it is
-  kept for the day the module leaves the runtime.
-  """
-  let legacyChanges: Changeset! {
-    let changes = ws.moduleSource(moduleRef).generatedContextChangeset
-    if (ownsEntrypoint and fileExists(entrypointPath + "/dang.toml")) {
-      let rooted = ws.withWorkdir(".")
-      atCwd(
-        rooted
-          .withChanges(changes)
-          .withNewFile(modulePath(entrypointPath + "/dang.toml"), contentsOf(entrypointPath + "/dang.toml"), permissions: 420)
-          .changes(rooted),
-      )
-    } else {
-      atCwd(changes)
-    }
-  }
-
-  """
-  Re-root a workspace-rooted changeset at the client's cwd.
-
-  The engine roots a generated context at the workspace, but a returned
-  changeset is applied relative to the caller's cwd, so without this every path
-  lands nested under the cwd a second time. `ModuleSource.generate` followed by
-  `Workspace.changes(from:)` is the native API for this, but that pair reports
-  a module's whole generated context as added rather than only what generation
-  changed — including engine-owned files the SDK must not touch — so the
-  rooting stays explicit here. Tracked by
-  https://github.com/dagger/dagger/issues/13947
-  """
-  let atCwd(changes: Changeset!): Changeset! {
-    let cwd = ws.cwd.trimPrefix("/").trimSuffix("/")
-    if (cwd == "" or cwd == ".") {
-      changes
-    } else {
-      # A cwd-relative changeset cannot express paths outside the cwd — e.g. a
-      # module discovered above it — and re-rooting would silently drop them,
-      # leaving that module never regenerated. Fail loudly instead.
-      let outside = (changes.addedPaths + changes.modifiedPaths + changes.removedPaths)
-        .filter { path => path != cwd and path.hasPrefix(cwd + "/") == false }
-      if (outside.length > 0) {
-        raise "generated changes fall outside the current directory " + cwd + ": " + outside.join(", ")
-      }
-      changes.after.directory(cwd).changes(changes.before.directory(cwd))
-    }
   }
 }
