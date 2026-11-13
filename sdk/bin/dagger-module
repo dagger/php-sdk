@@ -10,7 +10,6 @@ use Dagger\Module\ValueCodec;
 use GraphQL\Exception\QueryError;
 
 const USAGE = 'usage: dagger-module generate --name <module> --client-version <version> --output <directory>'
-    . ' [--outside <JSON list of paths>] [--exclude <JSON list of patterns>]'
     . ' | call --output <file>';
 
 function fail(string $message, int $code = 1): never
@@ -53,14 +52,7 @@ try {
             $clientVersion = required($options, 'client-version');
             $description = Description::fromDirectory(getcwd() . '/src');
             $naming = Dagger::getClientInstance()->naming($clientVersion)->module(required($options, 'name'));
-            DangEntrypointRenderer::write(
-                $description,
-                $naming,
-                $clientVersion,
-                required($options, 'output'),
-                json_decode($options['outside'] ?? '[]', true, flags: JSON_THROW_ON_ERROR),
-                json_decode($options['exclude'] ?? '[]', true, flags: JSON_THROW_ON_ERROR),
-            );
+            DangEntrypointRenderer::write($description, $naming, $clientVersion, required($options, 'output'));
             InterfaceClients::write($description, getcwd() . '/sdk/generated/ModuleInterfaces', $naming);
             break;
         case 'call':

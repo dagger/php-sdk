@@ -523,6 +523,7 @@ type E2e {
     let written = contentsOf(migrated, manifest)
     assertContains(written, "source = \"./sdk/entrypoint\"", "the manifest should name the entrypoint")
     assertNotContains(written, "engineVersion", "only a runtime reads engineVersion")
+    assertNotContains(written, "include", "a module without patterns or paths outside it should not declare include")
     assertNotContains(written, "[runtime]", "the php runtime should be replaced")
     assert(contentsOf(migrated, composer) == composerText, "Composer settings should not change")
     assert(exists(migrated, entrypointModulePath + "/composer.lock"), "the lock should be written")
@@ -608,7 +609,6 @@ type E2e {
     let translated = generatedEntrypoint(ws.withNewFile("/" + manifest, filtered))
     assertContains(contentsOf(translated, manifest), "\"!src/tmp\"", "the migrated manifest should keep the include patterns")
     assertContains(contentsOf(translated, manifest), "\"!notes\"", "an exclude entry should be kept as a negated include pattern")
-    assertContains(contentsOf(translated, entrypointModulePath + "/sdk/entrypoint/main.dang"), "exclude: [\"src/tmp\", \"notes\"]", "the build should leave the excluded patterns out")
     assertNoChange(translated, "a module with include patterns")
     assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!src/tmp\", \"src/tmp/keep\"]\n" + kept), "a pattern after an exclusion", "its include pattern src/tmp/keep includes again after an exclusion")
     assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!../lib\"]\n" + kept), "an exclusion outside the module", "its include pattern !../lib excludes outside the module")
@@ -634,7 +634,7 @@ type E2e {
     let moduleClass = entrypointModulePath + "/src/EntrypointApp.php"
     let seeded = generatedEntrypoint(ws.withoutFile("/" + composer))
     let seededOutside = generatedEntrypoint(ws.withoutFile("/" + composer).withNewFile("/" + manifest, "include = [\"../../outside/extra\"]\n" + kept))
-    assertContains(contentsOf(seededOutside, entrypointModulePath + "/sdk/entrypoint/main.dang"), "workspace.directory(\"../../outside/extra\"", "a seeded module should return its include directory outside it")
+    assertContains(contentsOf(seededOutside, manifest), "\"../../outside/extra\"", "a seeded module should keep its include directory outside it")
     assert(contentsOf(seeded, moduleClass) == contentsOf(ws, moduleClass), "the seeded template should keep the module's files")
     assertContains(generationError(ws.withoutFile("/" + composer), phpSdk(template: "missing")), "unknown init template: missing", "a module seeded from an unknown template")
     let initialized = generatedEntrypoint(ws.withoutFile("/" + manifest))
@@ -819,10 +819,11 @@ type E2e {
 
   """
   A module whose Composer path repository and autoload root sit outside its
-  directory moves to the entrypoint, whose sources returns them: a call reads
+  directory moves to the entrypoint, whose include lists them: a call reads
   both, and an edit outside the module reaches the next call. An include
-  directory outside the module reaches the call too. A path sources
-  cannot return is refused. A file outside the module, a path with a ".." after
+  directory outside the module reaches the call too, and a runtime kept beside
+  the entrypoint keeps the outside directories before the exclusions. A path
+  include cannot load is refused. A file outside the module, a path with a ".." after
   a name, and the workspace root are refused.
   """
   pub entrypointOutsidePathsCheck(ws: Workspace!): Void @check {
@@ -831,7 +832,7 @@ type E2e {
     let composerText = contentsOf(ws, composer)
     let generated = generatedEntrypoint(ws, path: outsideModulePath, name: "outside-app")
     assertNotContains(contentsOf(generated, outsideModulePath + "/dagger-module.toml"), "[runtime]", "the module should move to the entrypoint")
-    assertContains(contentsOf(generated, outsideModulePath + "/sdk/entrypoint/main.dang"), "workspace.directory(\"../shared/src\"", "sources should return the autoload root")
+    assertContains(contentsOf(generated, outsideModulePath + "/dagger-module.toml"), "\"../shared/src\"", "include should list the autoload root")
 
     # The engine reads a local module's context from its Git root, which must
     # hold the directories outside the module.
@@ -844,8 +845,6 @@ type E2e {
     let edited = local.withExec(["sed", "-i", "s/hello from lib/hello again/", "/work/lib/src/Greeting.php"])
     assertContains(call(edited, ["call", "greet"]), "hello again!", "an edit outside the module should reach the next call")
 
-    # From v1.0.0-beta.26 a lone include replaces sources, so the call only
-    # passes if the manifest's include also lists the Composer paths.
     let manifest = outsideModulePath + "/dagger-module.toml"
     let including = generatedEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!notes\", \"../extra\"]\n" + contentsOf(ws, manifest)), path: outsideModulePath, name: "outside-app")
     assertContains(contentsOf(including, manifest), "\"../lib\"", "include should list the Composer paths outside the module")
@@ -853,6 +852,22 @@ type E2e {
       generatedEntrypoint(including, path: outsideModulePath, name: "outside-app").changes(including).isEmpty,
       "a second generation with exclusions and Composer paths outside the module changed it",
     )
+    let ancestorComposer = composerText.replace("\"Shared\\\\\": \"../shared/src/\"", "\"Shared\\\\\": \"../shared/src/\", \"Outside\\\\\": \"../\"")
+    ["include = [\"!notes\"]\n", "exclude = [\"notes\"]\n"].each { patterns =>
+      let retained = including
+        .withNewFile("/" + composer, ancestorComposer)
+        .withNewFile("/" + manifest, patterns + contentsOf(ws, manifest) + "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n")
+      let kept = generatedEntrypoint(retained, path: outsideModulePath, name: "outside-app")
+      let keptManifest = contentsOf(kept, manifest)
+      assertContains(keptManifest, "[runtime]", "a runtime named beside the entrypoint should be kept")
+      assertContains(keptManifest, "engineVersion = \"v1.0.0-beta.27\"", "a runtime named beside the entrypoint should keep its engineVersion")
+      assert(keptManifest.containsMatch("\"\\.\\.\"[^\\]]*\"!notes\""), "include should list an ancestor Composer directory before the exclusions of " + patterns + ": " + keptManifest)
+      assert(
+        generatedEntrypoint(kept, path: outsideModulePath, name: "outside-app").changes(kept).isEmpty,
+        "a second generation of a retained runtime with an ancestor Composer directory and " + patterns + " changed it",
+      )
+      null
+    }
     [
       ["../lib/composer.json", "it reads the file ../lib/composer.json outside the module"],
       ["../lib/*.php", "outside the module is a glob"],

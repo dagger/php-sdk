@@ -1,2 +1,2 @@
-      .withDirectory("/src", contextDir.withoutDirectory(subPath + "/vendor"), exclude: excluded)
+      .withDirectory("/src", contextDir.withoutDirectory(subPath + "/vendor"))
       .withExec(["composer", "install"], disableDaggerInDagger: true)

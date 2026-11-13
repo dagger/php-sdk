@@ -340,7 +340,7 @@ type Mod {
     installed
       .withEnvVariable("DAGGER_CLIENT_VERSION", targetEngineVersion)
       .withExec(
-        ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint", "--outside", JSON.encode(outsideDirectories), "--exclude", JSON.encode(excludedPatterns)],
+        ["php", "sdk/bin/dagger-module", "generate", "--name", moduleName, "--client-version", targetEngineVersion, "--output", "/dagger/entrypoint"],
         experimentalPrivilegedNesting: true,
       )
   }
@@ -607,9 +607,9 @@ type Mod {
   generation translates again. A module
   already on the entrypoint keeps a runtime it names for older engines, which
   read such a manifest as a runtime manifest, include and all. Both lose their
-  dependencies, which the scope's clients provide; see usesEntrypoint. From
-  v1.0.0-beta.26 a lone include replaces sources, so it also lists the outside
-  directories that sources would return, before the patterns.
+  dependencies, which the scope's clients provide; see usesEntrypoint. Its
+  include also lists the outside directories, before the patterns, so that the
+  engine loads them with the module.
 
   sdk-helpers v1.0.9 refuses to write include into a manifest without a
   runtime, so the patterns are prepended to the file it writes. Drop the
@@ -618,16 +618,26 @@ type Mod {
   let withManifest(target: Workspace!): Workspace! {
     let loaded = sdkHelpers.loadModuleManifest(ws.withWorkdir(".").withWorkdir(rootPath))
     let namesRuntime = hasEntrypoint and runtimeSource != ""
-    let base = if (namesRuntime) { loaded.withoutLegacyRuntimeDependencies } else { loaded.withoutLegacyFields }
+    let declared = includePatterns.map { pattern => normalized(pattern) }
+    let listed = outsideDirectories.filter { dir => declared.contains(dir) == false } + includePatterns
+    let cleared = loaded.withoutLegacyFields
+    # sdk-helpers only appends include paths, so a retained runtime is written
+    # again after the include list in its final order.
+    let base = if (namesRuntime) {
+      let engineVersion = stringField(manifest, "engineVersion")
+      listed
+        .reduce(cleared) { kept, pattern => kept.withLegacyInclude(path: pattern) }
+        .withLegacyRuntime(runtime: runtimeSource, engineVersion: if (engineVersion == "") { null } else { engineVersion })
+    } else {
+      cleared
+    }
     let written = base
       .withName(name: moduleName)
       .withDangEntrypoint(source: "./" + entrypointPath)
       .generate(target.withWorkdir(rootPath), lock: false, legacyJson: false)
       .withWorkdir(".")
-    if (namesRuntime or includePatterns.length == 0) { return written }
+    if (namesRuntime or listed.length == 0) { return written }
     let path = modulePath("dagger-module.toml")
-    let declared = includePatterns.map { pattern => normalized(pattern) }
-    let listed = outsideDirectories.filter { dir => declared.contains(dir) == false } + includePatterns
     written.withNewFile(path, "include = " + JSON.encode(listed) + "\n" + written.directory("/", include: [path]).file(path).contents, permissions: 420)
   }
 
@@ -806,8 +816,8 @@ type Mod {
   """
   Why the generated entrypoint cannot run this module, read from its files
   without generating it; generatedBlockers holds the rest. The entrypoint builds from
-  the module's own directory and the Composer paths outside it that sources
-  returns, so other files outside that directory, or settings that change what
+  the module's own directory and the Composer paths outside it that include
+  lists, so other files outside that directory, or settings that change what
   it loads, are not preserved.
   The engine reads pre-v2 clients and disableDefaultFunctionCaching only from a
   runtime manifest.
@@ -837,9 +847,8 @@ type Mod {
   }
 
   """
-  What the negated include patterns drop from the module. The build leaves them
-  out, because engines before v1.0.0-beta.26 ignore include in a version 2
-  manifest and load them.
+  What the negated include patterns drop from the module, which generation
+  leaves out as the engine does.
   """
   let excludedPatterns: [String!]! {
     includePatterns.filter { pattern => pattern.hasPrefix("!") }.map { pattern => normalized(pattern.trimPrefix("!")) }
@@ -847,7 +856,7 @@ type Mod {
 
   """
   The plain include patterns that leave the module. Each is an outside path,
-  which generation mounts and sources returns.
+  which generation mounts.
   """
   let includedOutside: [String!]! {
     includePatterns.filter { pattern => pattern.hasPrefix("!") == false and leavesModule(pattern) and isGlob(pattern) == false }
@@ -868,7 +877,7 @@ type Mod {
   which the engine's PHP runtime adds back after its filter. Each is matched
   first against composer.json and composer.lock, which generation itself needs,
   and against sdk/ as a whole, then against the sdk/ generation writes, through
-  the same exclude matching as the build. Generating that sdk/ is what migration
+  the exclude matching of a Directory. Generating that sdk/ is what migration
   does next, so it runs only when no other reason refuses the module.
   """
   let generatedBlockers: [String!]! {
@@ -954,9 +963,9 @@ type Mod {
 
   """
   The outside paths that are directories. Generation mounts each one, and the
-  entrypoint's sources returns it, so the engine loads it with the module. A
-  file is neither: a module with one is refused, and a program's
-  composer update does not read an autoload file.
+  manifest's include lists it, so the engine loads it with the module. A file is
+  neither: a module with one is refused, and a program's composer update does
+  not read an autoload file.
   """
   let outsideDirectories: [String!]! {
     outsidePaths.filter { path => entryExists(workspacePath(path), ExistsType.DIRECTORY_TYPE) }
@@ -998,14 +1007,14 @@ type Mod {
 
   """
   Refuse a Composer path outside the module that cannot be loaded. For the
-  entrypoint's sources, which reads each directory with .gitignore applied, also
+  entrypoint, whose include the engine loads with .gitignore applied, also
   refuse a symlink: the engine imports one without the path it names.
   """
-  let checkOutsidePaths(sources: Boolean!): Void {
+  let checkOutsidePaths(entrypoint: Boolean!): Void {
     outsidePaths.each { path =>
       let rooted = workspacePath(path)
       let named = label + " reads " + path + " outside it, which"
-      if (sources) {
+      if (entrypoint) {
         let prefixes = rooted.split("/").reduce([] :: [String!]!) { found, part =>
           found + [if (found.length == 0) { part } else { (found[found.length - 1] ?? "") + "/" + part }]
         }
@@ -1017,7 +1026,7 @@ type Mod {
       if (entryExists(rooted, null) == false) {
         raise named + " holds no file in the workspace"
       }
-      if (sources and entryExists(rooted, ExistsType.DIRECTORY_TYPE)) {
+      if (entrypoint and entryExists(rooted, ExistsType.DIRECTORY_TYPE)) {
         let kept = ws.directory("/" + rooted, exclude: ["**/.git", "**/.gitignore"], gitignore: true).glob("**").filter { file => file.hasSuffix("/") == false }
         if (kept.length == 0) {
           raise named + " holds no file that .gitignore keeps"

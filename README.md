@@ -211,10 +211,16 @@ module that already has the `./sdk` repository keeps its `composer.json`
 unchanged.
 
 A Composer path repository or autoload directory outside the module, such as `../lib`,
-moves with the module. The generated entrypoint's `sources` returns each such
-directory, so the engine loads it with the module. The engine loads a local
+moves with the module. Generation lists each such directory in the manifest's
+`include`, so the engine loads it with the module. The engine loads a local
 module's files from its Git repository, so the directory must be inside that
 repository. Run `dagger generate` again after you change those paths.
+
+The engine loads such a directory as it loads any `include` path: for a local
+module, every file its `.gitignore` rules keep, `vendor/` and a nested `.git`
+included unless a rule ignores them; for a Git module, every committed file.
+Ignore `vendor/` in that directory's `.gitignore` to keep it out of the module's
+context. The build installs the module's dependencies itself and does not read it.
 
 Generation fails for such a path in the cases below. A failed generation applies
 none of its changes.
@@ -226,23 +232,16 @@ none of its changes.
 A module with `include` or `exclude` patterns inside the module also moves to the
 entrypoint. The engine always loads the module directory, so a plain pattern
 changes nothing. An `exclude` entry, or an `include` pattern that starts with `!`,
-drops files: the generated build leaves them out. The migrated manifest keeps the
+drops files: the engine leaves them out of the module. The migrated manifest keeps the
 patterns in `include`, with each `exclude` entry as a `!` pattern. Every generation
 reads them again, so editing `include` and running `dagger generate` updates the
 build.
 
 A plain `include` directory outside the module, such as `../data`, moves with the
-module, as a Composer path outside it does. From `v1.0.0-beta.26` an `include`
-alone replaces `sources`. When the manifest declares `include`, generation
-therefore also lists the Composer directories outside the module in it.
-Generation does not remove an entry it added. After you remove such a Composer
-path, remove its entry from `include` too.
-
-From `v1.0.0-beta.26` the engine applies `include` to the module's files.
-`v1.0.0-beta.18` to `v1.0.0-beta.25` ignore `include` in a version 2 manifest and
-load the excluded files. The generated build still leaves them out, and `sources`
-returns the outside directories, so a call sees the same files on every supported
-engine.
+module, as a Composer path outside it does. Generation lists the Composer
+directories outside the module before the patterns. It does not remove an entry
+it added. After you remove such a Composer path, remove its entry from `include`
+too.
 
 A module with `[[dependencies]]` moves to the entrypoint when each dependency is a
 client of its scope; see [Module clients](#module-clients). In dagger/dagger
@@ -368,8 +367,8 @@ changed. To move the module:
    `../lib` for `../lib/*.php`. The module then loads every file of that
    directory, not only the files the glob matched.
 2. Remove an exclusion outside the module.
-3. Check which files each exclusion matches. The next step makes the build leave
-   out every one of them.
+3. Check which files each exclusion matches. The engine leaves every one of them
+   out of the module.
 4. Remove a plain `include` pattern that follows an exclusion, unless it names a
    directory beside the module.
 5. Run `dagger generate`.

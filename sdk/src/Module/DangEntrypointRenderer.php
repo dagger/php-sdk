@@ -34,15 +34,13 @@ final readonly class DangEntrypointRenderer
         ModuleNaming $naming,
         string $clientVersion,
         string $output,
-        array $outside = [],
-        array $exclude = [],
     ): void {
         if (!is_dir($output) && !mkdir($output, 0755, true)) {
             throw new RuntimeException("Cannot create the directory $output");
         }
 
         file_put_contents("$output/types.dang", self::renderTypes($description, $naming));
-        file_put_contents("$output/main.dang", self::renderMain($clientVersion, $outside, $exclude));
+        file_put_contents("$output/main.dang", self::renderMain($clientVersion));
     }
 
     public static function renderTypes(Description $description, ModuleNaming $naming): string
@@ -81,27 +79,9 @@ final readonly class DangEntrypointRenderer
             . $body . "    ]\n  }\n}\n";
     }
 
-    /**
-     * @param list<string> $outside Directories outside the module that its
-     *     Composer setup reads, relative to the module.
-     * @param list<string> $exclude Patterns, relative to the module, that the
-     *     build leaves out.
-     */
-    public static function renderMain(string $clientVersion, array $outside = [], array $exclude = []): string
+    public static function renderMain(string $clientVersion): string
     {
-        $sources = implode('', array_map(
-            static fn($path) => '      .withDirectory(workspace.cwd + ' . self::quote("/$path")
-                . ', workspace.directory(' . self::quote($path) . ', exclude: ' . self::SOURCES_EXCLUDE
-                . ", gitignore: true))\n",
-            $outside,
-        ));
-
-        return self::HEADER . strtr(self::MAIN, [
-            '%clientVersion%' => self::quote($clientVersion),
-            "%sources%\n" => $sources,
-            '%exclude%' => self::SOURCES_EXCLUDE,
-            '%buildExclude%' => '[' . implode(', ', array_map(self::quote(...), $exclude)) . ']',
-        ]);
+        return self::HEADER . str_replace('%clientVersion%', self::quote($clientVersion), self::MAIN);
     }
 
     /** @return list<string> */
@@ -301,15 +281,17 @@ final readonly class DangEntrypointRenderer
         ];
     }
 
-    private const SOURCES_EXCLUDE = '["**/.git", "vendor"]';
-
+    /**
+     * The sources member selects the entrypoint contract whose types and call
+     * take no workspace. It returns the module directory only: the manifest's
+     * include lists the directories outside it, and the engine does not run
+     * sources for a manifest that declares include.
+     */
     private const MAIN = <<<'DANG'
 
     type Entrypoint implements ModuleEntrypoint {
       pub sources(workspace: Workspace!): Directory! {
-        directory
-    %sources%
-          .withDirectory(workspace.cwd, workspace.directory(".", exclude: %exclude%, gitignore: true))
+        directory.withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git", "vendor"], gitignore: true))
       }
 
       pub types: [TypeDef!]! {
@@ -350,7 +332,7 @@ final readonly class DangEntrypointRenderer
       }
 
       let runtime: Container! {
-        PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath, exclude: %buildExclude%).installed
+        PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed
       }
     }
 
