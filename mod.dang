@@ -96,27 +96,16 @@ type Mod {
   module with an entrypoint of its own or a runtime other than PHP's.
   """
   pub generate: Changeset! {
-    if (skipGenerate) {
-      changeset
-    } else if (usesEntrypoint) {
-      let cwd = ws.cwd.trimPrefix("/")
-      entrypointGenerated.withWorkdir(if (cwd == "") { "." } else { cwd }).changes(ws)
-    } else {
-      changeset
-    }
+    let cwd = ws.cwd.trimPrefix("/")
+    generated.withWorkdir(if (cwd == "") { "." } else { cwd }).changes(ws)
   }
 
   """
   The workspace with this module generated, at the workspace root.
   """
   pub generated: Workspace! {
-    if (skipGenerate) {
-      ws.withWorkdir(".")
-    } else if (usesEntrypoint) {
-      entrypointGenerated
-    } else {
-      ws.withWorkdir(".")
-    }
+    let generates = if (skipGenerate) { false } else { usesEntrypoint }
+    if (generates) { entrypointGenerated } else { ws.withWorkdir(".") }
   }
 
   """
@@ -367,6 +356,7 @@ type Mod {
       .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
       .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
       .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
+      .withDirectory("/template", currentModule.source.directory("templates/common"))
       .withDirectory("/template", currentModule.source.directory("templates/" + templateName))
       .withWorkdir("/helper")
       .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])

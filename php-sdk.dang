@@ -63,10 +63,9 @@ type PhpSDK {
     checkEngine
     if (isModule == false) {
       let scope = normalizePath(ws.cwd)
-      checkClientReleases("the PHP program at " + scope, clients)
       # The core schema is read through a Dang manifest, which needs a name.
       let manifestName = if (name == "") { "php-program" } else { name }
-      modAt(scope, ws, manifestName, clients: clients).programGenerated.withWorkdir(scope)
+      modAt(scope, ws, manifestName, subject: "the PHP program at " + scope, clients: clients).programGenerated.withWorkdir(scope)
     } else {
       let scope = normalizePath(ws.cwd)
       # Mod.rootPath is workspace-root-relative, so the scope is generated from
@@ -83,7 +82,7 @@ type PhpSDK {
           .generate(rooted.withWorkdir(scope), legacyJson: false)
           .withWorkdir(".")
       }
-      targetedMod(scope, initialized, name, "module \"" + name + "\"", clients: clients, created: created).generated.withWorkdir(scope)
+      modAt(scope, initialized, name, subject: "module \"" + name + "\"", clients: clients, created: created).generated.withWorkdir(scope)
     }
   }
 
@@ -102,27 +101,24 @@ type PhpSDK {
   }
 
   """
-  Whether the running engine is older than targetEngineVersion. Released engines
-  compare base versions, so the manifest's engineVersion does not keep an older
-  v1.0.0 prerelease out. A dev build or a later release is not older.
+  Refuses an engine older than targetEngineVersion. Released engines compare
+  base versions, so the manifest's engineVersion does not keep an older v1.0.0
+  prerelease out. A dev build sorts after the releases it could be older than.
   """
-  let belowEngineFloor: Boolean! {
-    let prefix = "v1.0.0-beta."
-    let release = version.split("+")[0] ?? version
-    let beta = release.trimPrefix(prefix)
-    let floor = targetEngineVersion.trimPrefix(prefix)
-    release.hasPrefix("v0.") or release.hasPrefix("v1.0.0-0") or
-      (beta != release and beta.containsMatch("^[0-9]+$") and beta.padLeft(6) < floor.padLeft(6))
-  }
-
   let checkEngine: Void {
-    if (belowEngineFloor) {
+    if (releasePrecedes(version, targetEngineVersion)) {
       raise "php-sdk needs an engine from " + targetEngineVersion + ", and this one is " + version + ": upgrade the engine"
     }
     null
   }
 
-  let modAt(path: String!, ws: Workspace!, name: String!, laterEngine: Boolean! = false, clients: [ModuleSource!] = null, created: Boolean! = false, globalSetting: Boolean = globalClient): Mod! {
+  """
+  The module at path. A client module that declares a release before the
+  identifier-casing cut is refused, as subject's client; see
+  checkClientReleases.
+  """
+  let modAt(path: String!, ws: Workspace!, name: String!, subject: String! = "", clients: [ModuleSource!] = null, created: Boolean! = false, globalSetting: Boolean = globalClient): Mod! {
+    checkClientReleases(subject, clients ?? ([] :: [ModuleSource!]!))
     Mod(
       rootPath: path,
       ws: ws,
@@ -130,7 +126,7 @@ type PhpSDK {
       targetEngineVersion: targetEngineVersion,
       givenName: name,
       templateName: selectedTemplate,
-      declaresLaterEngine: laterEngine,
+      declaresLaterEngine: declaresLaterEngine(ws, path),
       clients: clients,
       globalClientSetting: globalSetting,
       createdManifest: created,
@@ -151,16 +147,6 @@ type PhpSDK {
       err: Error => ""
     }
     releasePrecedes(targetEngineVersion, declared)
-  }
-
-  """
-  The module at path. A client module that declares a release before the
-  identifier-casing cut is refused too; see checkClientReleases.
-  """
-  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!, clients: [ModuleSource!] = null, created: Boolean! = false, globalSetting: Boolean = globalClient): Mod! {
-    let mod = modAt(path, ws, name, declaresLaterEngine(ws, path), clients, created, globalSetting)
-    checkClientReleases(subject, clients ?? ([] :: [ModuleSource!]!))
-    mod
   }
 
   """
@@ -237,10 +223,8 @@ type PhpSDK {
   first, or an empty string when there is none.
   """
   let moduleConfigPath(ws: Workspace!, dir: String!): String! {
-    let paths = moduleConfigFilenames
-      .map { filename => if (dir == ".") { filename } else { dir + "/" + filename } }
-      .filter { path => ws.directory("/", include: [path]).exists(path) }
-    paths[0] ?? ""
+    let filename = moduleConfigFilenames.filter { filename => hasFile(ws, dir, filename) }[0] ?? ""
+    if (filename == "" or dir == ".") { filename } else { dir + "/" + filename }
   }
 
   let hasFile(ws: Workspace!, dir: String!, filename: String!): Boolean! {
@@ -256,26 +240,17 @@ type PhpSDK {
   """
   Return init templates tracked by this module.
 
-  Templates live under templates/<name> and are materialized into a new module
-  before generation. The `template` setting selects one; empty selects the
-  default.
+  Templates live under templates/<name>, over the files of templates/common,
+  and are materialized into a new module before generation. The `template`
+  setting selects one; empty selects the default.
   """
   pub templates: [Template!]! {
-    if (currentModule.source.exists("templates")) {
-      let root = currentModule.source.directory("templates")
-      root.entries.map { name =>
-        Template(
-          name: name.trimSuffix("/"),
-          source: root.directory(name),
-        )
-      }
-    } else {
-      directory.entries.map { name =>
-        Template(
-          name: name,
-          source: directory,
-        )
-      }
+    let root = currentModule.source.directory("templates")
+    root.entries.filter { name => name != "common/" }.map { name =>
+      Template(
+        name: name.trimSuffix("/"),
+        source: root.directory("common").withDirectory(".", root.directory(name)),
+      )
     }
   }
 
@@ -319,7 +294,7 @@ type PhpSDK {
     } else {
       null
     }
-    targetedMod(modPath, ws, "", "module at " + modPath, globalSetting: if (recorded == null) { globalClient } else { recorded.asBoolean })
+    modAt(modPath, ws, "", globalSetting: if (recorded == null) { globalClient } else { recorded.asBoolean })
   }
 
   """
