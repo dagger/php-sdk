@@ -44,6 +44,11 @@ type Mod {
   let templateName: String!
 
   """
+  The templateName template, null when this module has no such template.
+  """
+  let template: Template
+
+  """
   The modules the scope declares as clients, as the engine loaded them. Null when
   the caller does not know them, as a direct mod call does not.
   """
@@ -304,26 +309,25 @@ type Mod {
   }
 
   """
-  The templateName template rendered with the module name. A module without
-  composer.json gets the files of it that it does not have, as the engine's PHP
-  runtime seeds such a module.
+  The templateName template rendered with the module name: the engine's name for
+  the module's type, which names its main class, and the module name in kebab
+  case; its other files are copied as they are. A module without composer.json
+  gets the files of it that it does not have, as the engine's PHP runtime seeds
+  such a module.
   """
   let renderedTemplate: Directory! {
-    if (currentModule.source.exists("templates/" + templateName) == false) {
+    if (template == null) {
       raise "unknown init template: " + templateName
     }
-    container
-      .from("golang:1.25-alpine")
-      .withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
-      .withDirectory("/template", currentModule.source.directory("templates/common"))
-      .withDirectory("/template", currentModule.source.directory("templates/" + templateName))
-      .withWorkdir("/helper")
-      .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
-      .withExec(["render-template", moduleName, "/template", "/rendered"])
-      .directory("/rendered")
+    let rules = naming(version: targetEngineVersion)
+    let className = rules.formatIdentifiers(names: [moduleName], casing: Casing.PASCAL)[0] ?? ""
+    let kebab = rules.formatIdentifiers(names: [moduleName], casing: Casing.KEBAB)[0] ?? ""
+    let source = template.source
+    let rendered = source.glob("**/*.tmpl")
+    rendered.reduce(rendered.reduce(source) { copied, path => copied.withoutFile(path) }) { written, path =>
+      let contents = source.file(path).contents.replace("{{ .ModuleType }}", className).replace("{{ .ModuleKebab }}", kebab)
+      written.withNewFile(path.trimSuffix(".tmpl").replace("{{.ModuleType}}", className), contents)
+    }
   }
 
   """

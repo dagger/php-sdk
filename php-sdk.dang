@@ -116,6 +116,7 @@ type PhpSDK {
       targetEngineVersion: targetEngineVersion,
       givenName: name,
       templateName: selectedTemplate,
+      template: templates.filter { listed => listed.name == selectedTemplate }[0],
       declaresLaterEngine: declaresLaterEngine(ws, path),
       clients: clients,
       globalClientSetting: globalSetting,
