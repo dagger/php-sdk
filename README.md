@@ -81,6 +81,24 @@ use function Dagger\core;
 return core()->container()->from('alpine:3.24');
 ```
 
+### Global client
+
+Code written for the built-in PHP runtime calls the global client,
+`Dagger\dag()`. Generation writes `sdk/src/dag.php`, which defines `dag()`, and
+autoloads it from `sdk/composer.json` when the module is on the built-in runtime
+(`[runtime] source = "php"`, or `"sdk": {"source": "php"}` in a legacy
+`dagger.json`) or its `sdk/` already has `dag()`, in `dag.php` or in the
+`functions.php` an earlier release of this SDK wrote. A new module does not get
+it.
+
+`dag()` returns the same client as `core()`, so it restores core calls only. Call
+a dependency through `Dagger\Clients\<Name>`; see [Module clients](#module-clients).
+
+The `globalClient` setting overrides that: `true` writes `dag()`, and `false`
+leaves it out. `dagger call php-sdk mod ... generate` reads it from
+`[sdks.php.scopes."<module path>".settings]` in `dagger.toml`. The global client is
+temporary: move the code to `core()` and set `globalClient = false`.
+
 ## Function roles
 
 A role attribute next to `#[DaggerFunction]` registers the function for a CLI command. The

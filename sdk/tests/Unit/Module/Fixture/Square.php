@@ -7,7 +7,7 @@ namespace DaggerModule;
 use Dagger\Container;
 use Dagger\Directory;
 
-use function Dagger\dag;
+use function Dagger\core;
 
 final class Square implements Shape
 {
@@ -18,7 +18,7 @@ final class Square implements Shape
 
     public function base(Directory $source): Container
     {
-        return dag()->container()->withDirectory('/src', $source);
+        return core()->container()->withDirectory('/src', $source);
     }
 
     public function label(string $queryBuilder): string
