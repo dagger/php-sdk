@@ -35,18 +35,11 @@ final readonly class InterfaceClients
         return self::NAMESPACE . '\\' . NormalizesClassName::trimLeadingNamespace($interface);
     }
 
-    public static function write(Description $description, string $directory, ?ModuleNaming $naming): void
+    public static function write(Description $description, string $directory, ModuleNaming $naming): void
     {
         $interfaces = array_filter($description->objects, static fn($object) => $object->isInterface());
         if ($interfaces === []) {
             return;
-        }
-
-        if ($naming === null) {
-            throw new RuntimeException(sprintf(
-                'The interface %s needs a target from v1.0.0-beta.26, whose engine names its types',
-                current($interfaces)->name,
-            ));
         }
 
         $writer = new CodeWriter($directory, self::NAMESPACE);

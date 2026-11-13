@@ -284,7 +284,7 @@ type Mod {
       .generate(rooted.withWorkdir(rootPath), lock: false, legacyJson: false)
       .withWorkdir(".")
       .moduleSource(moduleRef)
-      .introspectionSchemaJSON
+      .introspectionSchemaJson
   }
 
   """
@@ -507,7 +507,7 @@ type Mod {
     let generated = knownClients.reduce(core) { ctr, client =>
       let pin = if (client.kind == ModuleSourceKind.GIT_SOURCE) { ["--pin", client.pin] } else { [] :: [String!]! }
       ctr
-        .withMountedFile("/client-schema.json", client.withEngineVersion(targetEngineVersion).clientSchemaIntrospectionJSON)
+        .withMountedFile("/client-schema.json", client.withEngineVersion(targetEngineVersion).clientSchemaIntrospectionJson)
         .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/client-schema.json", "--client", client.moduleName, "--address", clientAddress(client)] + pin)
     }
     generated

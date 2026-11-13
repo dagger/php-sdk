@@ -1,7 +1,6 @@
 #!/usr/bin/env php
 <?php declare(strict_types=1);
 
-use Dagger\Client;
 use Dagger\Dagger;
 use Dagger\Module\CallDispatcher;
 use Dagger\Module\DangEntrypointRenderer;
@@ -51,20 +50,14 @@ $options = options(array_slice($argv, 2));
 try {
     switch ($mode) {
         case 'generate':
-            $name = required($options, 'name');
             $clientVersion = required($options, 'client-version');
-            // The client is generated against the target's view, so it has
-            // Query.naming exactly where the engine serves it there.
             $description = Description::fromDirectory(getcwd() . '/src');
-            $naming = method_exists(Client::class, 'naming')
-                ? Dagger::getClientInstance()->naming($clientVersion)->module($name)
-                : null;
+            $naming = Dagger::getClientInstance()->naming($clientVersion)->module(required($options, 'name'));
             DangEntrypointRenderer::write(
                 $description,
-                $name,
+                $naming,
                 $clientVersion,
                 required($options, 'output'),
-                $naming === null ? null : $naming->enumMemberNames(...),
                 json_decode($options['outside'] ?? '[]', true, flags: JSON_THROW_ON_ERROR),
                 json_decode($options['exclude'] ?? '[]', true, flags: JSON_THROW_ON_ERROR),
             );

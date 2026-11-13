@@ -1,7 +1,7 @@
 """
 Manage Dagger modules that use the PHP SDK.
 """
-type PhpSdk {
+type PhpSDK {
   # Matches `"sdk": { "source": "php" }` in a legacy dagger.json.
   let legacyConfigPattern = "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"php\""
 
@@ -98,10 +98,8 @@ type PhpSdk {
   }
 
   """
-  The engine API version a new module declares, past the identifier-casing cut at
-  v1.0.0-beta.26. Released engines compare base versions, so older engines load
-  it. The module's client schema, its DAGGER_CLIENT_VERSION and its dang.toml use
-  this one value.
+  The engine API version a new module declares. The module's client schema, its
+  DAGGER_CLIENT_VERSION and its dang.toml use this one value.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.27"
 
@@ -113,10 +111,10 @@ type PhpSdk {
   }
 
   """
-  The first release whose entrypoint contract has the sources member, which
-  every generated entrypoint declares.
+  The oldest engine this SDK runs on, whose naming API names every declaration
+  generation needs.
   """
-  let floorEngineVersion: String! = "v1.0.0-beta.18"
+  let floorEngineVersion: String! = "v1.0.0-beta.27"
 
   """
   Whether the running engine is below the floor. Released engines compare base
@@ -158,7 +156,7 @@ type PhpSdk {
   Whether the module config in a workspace-root-relative directory declares an
   engineVersion later than targetEngineVersion, the latest release this SDK can
   generate for. A pinned targetVersion does not change the comparison. Mod reads
-  its own manifest, but only PhpSdk can compare releases.
+  its own manifest, but only PhpSDK can compare releases.
   """
   let declaresLaterEngine(ws: Workspace!, dir: String!): Boolean! {
     let path = moduleConfigPath(ws, dir)

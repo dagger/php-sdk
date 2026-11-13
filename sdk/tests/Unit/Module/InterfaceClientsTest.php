@@ -169,15 +169,6 @@ class InterfaceClientsTest extends TestCase
         ValueCodec::forClient($client)->decode('the-id', new Type(Shape::class));
     }
 
-    #[Test]
-    public function itRefusesATargetWithoutTheNamingApi(): void
-    {
-        self::expectException(RuntimeException::class);
-        self::expectExceptionMessage('needs a target from v1.0.0-beta.26');
-
-        InterfaceClients::write(Description::fromDirectory(__DIR__ . '/Fixture'), sys_get_temp_dir(), null);
-    }
-
     #[Test, DataProvider('provideUnimplementable')]
     public function itRefusesMethodsItCannotImplement(string $interface, string $problem): void
     {

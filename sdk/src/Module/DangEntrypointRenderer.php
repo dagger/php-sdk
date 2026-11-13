@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Dagger\Module;
 
-use Closure;
+use Dagger\ModuleNaming;
 use Dagger\Service\NormalizesClassName;
 use Dagger\TypeDefKind;
 use Dagger\ValueObject\Argument;
@@ -14,6 +14,7 @@ use Dagger\ValueObject\DaggerObject;
 use Dagger\ValueObject\ListOfType;
 use Dagger\ValueObject\Type;
 use RuntimeException;
+use TypeError;
 
 final readonly class DangEntrypointRenderer
 {
@@ -30,10 +31,9 @@ final readonly class DangEntrypointRenderer
 
     public static function write(
         Description $description,
-        string $moduleName,
+        ModuleNaming $naming,
         string $clientVersion,
         string $output,
-        ?Closure $enumMemberNames = null,
         array $outside = [],
         array $exclude = [],
     ): void {
@@ -41,26 +41,33 @@ final readonly class DangEntrypointRenderer
             throw new RuntimeException("Cannot create the directory $output");
         }
 
-        file_put_contents("$output/types.dang", self::renderTypes($description, $moduleName, $enumMemberNames));
+        file_put_contents("$output/types.dang", self::renderTypes($description, $naming));
         file_put_contents("$output/main.dang", self::renderMain($clientVersion, $outside, $exclude));
     }
 
-    /**
-     * @param ?Closure(list<string>): list<string> $enumMemberNames The engine's
-     *     enum member names, in input order, where the engine can answer.
-     */
-    public static function renderTypes(
-        Description $description,
-        string $moduleName,
-        ?Closure $enumMemberNames = null,
-    ): string {
+    public static function renderTypes(Description $description, ModuleNaming $naming): string
+    {
+        $objects = array_filter($description->objects, static fn($object) => !$object->isInterface());
+        try {
+            $mainObject = $naming->mainObject(array_values(array_map(
+                static fn($object) => NormalizesClassName::trimLeadingNamespace($object->name),
+                $objects,
+            )));
+        } catch (TypeError $e) {
+            // The generated client types a nullable String as string, so the
+            // engine's null, no main object, arrives as this error.
+            if (!str_contains($e->getMessage(), 'mainObject(): Return value must be of type string, null returned')) {
+                throw $e;
+            }
+            $mainObject = null;
+        }
         $entries = [
             ...array_map(
-                static fn($object) => self::object($object, $moduleName),
+                static fn($object) => self::object($object, $mainObject),
                 $description->objects,
             ),
             ...array_map(
-                static fn($enum) => self::enum($enum, $enumMemberNames),
+                static fn($enum) => self::enum($enum, $naming),
                 $description->enums,
             ),
         ];
@@ -98,7 +105,7 @@ final readonly class DangEntrypointRenderer
     }
 
     /** @return list<string> */
-    private static function object(DaggerObject $object, string $moduleName): array
+    private static function object(DaggerObject $object, ?string $mainObject): array
     {
         $name = NormalizesClassName::trimLeadingNamespace($object->name);
         $isInterface = $object->isInterface();
@@ -119,7 +126,7 @@ final readonly class DangEntrypointRenderer
         // The engine finds an entrypoint's main object by its constructor, even
         // for an object with neither fields nor one of its own, and refuses more
         // than one constructor. Only the main object's is ever called.
-        if (!$isInterface && self::isMainObject($name, $moduleName)) {
+        if (!$isInterface && $name === $mainObject) {
             $constructor = $object->daggerFunctions[''] ?? null;
             $function = $constructor !== null
                 ? self::function($constructor)
@@ -130,17 +137,10 @@ final readonly class DangEntrypointRenderer
         return $lines;
     }
 
-    private static function isMainObject(string $name, string $moduleName): bool
-    {
-        $normalize = static fn(string $value) => strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $value));
-
-        return $normalize($name) === $normalize($moduleName);
-    }
-
     /** @return list<string> */
-    private static function enum(DaggerEnum $enum, ?Closure $enumMemberNames): array
+    private static function enum(DaggerEnum $enum, ModuleNaming $naming): array
     {
-        self::refuseCollidingCases($enum, $enumMemberNames);
+        self::refuseCollidingCases($enum, $naming);
 
         $name = NormalizesClassName::trimLeadingNamespace($enum->name);
         $lines = ['typeDef.withEnum(' . self::quote($name) . self::option('description', $enum->description) . ')'];
@@ -159,13 +159,11 @@ final readonly class DangEntrypointRenderer
      * an error, which would lose a PHP case from the module. Names are escaped
      * because two that collide can differ only in invisible bytes.
      */
-    private static function refuseCollidingCases(DaggerEnum $enum, ?Closure $enumMemberNames): void
+    private static function refuseCollidingCases(DaggerEnum $enum, ModuleNaming $naming): void
     {
         $visible = static fn(string $name) => addcslashes($name, "\x80..\xff");
         $cases = array_map(static fn($case) => $case->name, $enum->cases);
-        $names = $enumMemberNames === null
-            ? array_map(EngineNaming::enumMemberName(...), $cases)
-            : $enumMemberNames($cases);
+        $names = $naming->enumMemberNames($cases);
         $seen = [];
         foreach ($cases as $i => $case) {
             $name = $names[$i];

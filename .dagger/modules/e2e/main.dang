@@ -52,7 +52,7 @@ type E2e {
   """
   The fixture module generated from a workspace, at the workspace root.
   """
-  let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): Workspace! {
+  let generatedEntrypoint(ws: Workspace!, sdk: PhpSDK! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): Workspace! {
     sdk.generateScope(ws.withWorkdir(path), isModule: true, name: name, clients: clients).withWorkdir(".")
   }
 
@@ -95,7 +95,7 @@ type E2e {
   """
   The message generation fails with, or an empty string when it does not fail.
   """
-  let generationError(ws: Workspace!, sdk: PhpSdk! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): String! {
+  let generationError(ws: Workspace!, sdk: PhpSDK! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): String! {
     let cwd = generatedEntrypoint(ws, sdk, clients, path, name).cwd rescue {
       err: Error => "failed: " + err.message
     }
@@ -187,9 +187,6 @@ type E2e {
       "dagger = \"v1.0.0-beta.27\"",
       "the entrypoint should declare v1.0.0-beta.27, past the identifier-casing cut",
     )
-    let portedNaming = generated.file("sdk/src/Module/EngineNaming.php").contents
-    assertContains(portedNaming, "Copyright (c) 2018 Ma_124", "the generated SDK should keep the strcase copyright")
-    assertContains(portedNaming, "Permission is hereby granted", "the generated SDK should keep the strcase permission notice")
     assertContains(generated.file("sdk/LICENSE").contents, "Apache License", "the generated SDK should keep its own license")
     let moduleClass = generated.file("src/Layering.php").contents
     assertContains(moduleClass, "core()", "the default template should call the core API through core()")
@@ -763,7 +760,7 @@ type E2e {
     let collision = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/src/Encoding.php", encoding)).cwd rescue {
       err: GraphQLError => err.message + "\n" + err.extensions
     }
-    assertContains(collision, "its cases Base64 and BASE64 the same name, BASE64", "cases the engine names alike should be refused, on an engine that serves naming (v1.0.0-beta.26+)")
+    assertContains(collision, "its cases Base64 and BASE64 the same name, BASE64", "cases the engine names alike should be refused")
 
     let fat = kept + entrypointTable
     let keptRuntime = contentsOf(generatedEntrypoint(migrated.withNewFile("/" + manifest, fat)), manifest)
@@ -928,7 +925,7 @@ type E2e {
   pinned module on the PHP runtime that cannot move to the entrypoint.
   """
   pub targetVersionCheck(ws: Workspace!): Void @check {
-    let pinned = "v1.0.0-beta.24"
+    let pinned = target
     let sdk = phpSdk(targetVersion: pinned)
     let generated = generatedEntrypoint(ws, sdk)
     let direct = ws.withChanges(sdk.mod(ws, path: entrypointModulePath, findUp: false).generate)

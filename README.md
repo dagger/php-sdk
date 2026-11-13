@@ -25,21 +25,12 @@ needs PHP 8.3 or later. Modules do not need the dev tooling, so their floor stay
 
 ## Engine requirement
 
-This module needs an engine from `v1.0.0-beta.18`. Every generated entrypoint
-declares the `sources` member of the entrypoint contract. `v1.0.0-beta.18` is the
-first release with that member. An older engine passes a workspace to `types` and
-`call`, which the generated entrypoint does not declare. No check here runs on
-`v1.0.0-beta.18`.
-
-Modules target `v1.0.0-beta.27`: the floor only says which engines the SDK and the
-entrypoints it generates run on.
-
-Earlier versions of this module documented `v1.0.0-beta.12`. On an older engine,
-`dagger generate` and `dagger module init` now stop with a message that names the
-engine. Upgrade the engine to generate. The engine resolves its built-in PHP
-runtime from `github.com/dagger/dagger/sdk/php`, not from this module. A module already on the
-built-in runtime therefore still loads on that engine, without this module
-generating it. An engine below the floor is not supported.
+This module needs an engine from `v1.0.0-beta.27`, the release it generates
+modules for. On an older engine, `dagger generate` and `dagger module init` stop
+with a message that names the engine: upgrade the engine to generate. The engine
+resolves its built-in PHP runtime from `github.com/dagger/dagger/sdk/php`, not
+from this module, so a module on the built-in runtime still loads on an older
+engine, without this module generating it.
 
 ## Install
 
@@ -112,8 +103,7 @@ optional when it has a default value, a nullable type or `#[DefaultPath]`; other
 | `#[Up]` | `dagger start`, alias `dagger up` | non-null `Service` | `Workspace` only | [`v0.20.4`](https://github.com/dagger/dagger/blob/v0.20.4/core/schema/module.go) |
 | `#[Agent]` | `dagger agent` | non-null `LLM` | exactly one required `LLM`; any other required argument is `Workspace` or `Agent` | [`v1.0.0-beta.10`](https://github.com/dagger/dagger/blob/v1.0.0-beta.10/core/schema/module.go) |
 
-The [engine floor](#engine-requirement), `v1.0.0-beta.18`, has all four APIs and commands.
-This repository runs no test of a role on the floor engine.
+The [engine floor](#engine-requirement), `v1.0.0-beta.27`, has all four APIs and commands.
 
 Inside a `#[DaggerObject]` class, with the attributes from `Dagger\Attribute`:
 ```php
@@ -307,11 +297,8 @@ from the built-in runtime stays as it was until you rename one of the cases and 
 references. The engine can still update the workspace's `dagger.lock` when the session
 ends. A generated entrypoint gets this check the next time it is generated.
 
-The check names the cases as the engine does for the module's target version. From
-`v1.0.0-beta.26` the engine names `Base64` `BASE64`, not `BASE_64`, so `Base64` and
-`BASE64` collide there and `Base64` and `BASE_64` do not. For such a target, generation
-asks the engine for the names. For a target below `v1.0.0-beta.26`, the check uses the
-earlier naming rules. It also uses them when the engine has no `naming` API.
+Generation asks the engine for the names. It names `Base64` `BASE64`, not `BASE_64`,
+so `Base64` and `BASE64` collide and `Base64` and `BASE_64` do not.
 
 A PHP interface with `#[DaggerObject]` is a module interface. A module function
 can take a module interface, or a list of one, as an argument. Generation writes a
@@ -325,8 +312,7 @@ only `bool`, `int`, `float`, `string`, `void` and non-null core objects such as
 `Directory`.
 
 A module function can return a module interface, or a list of one, that it
-received as an argument. An object field cannot hold a module interface. A module
-interface needs a target from `v1.0.0-beta.26`. A module loaded under another
+received as an argument. An object field cannot hold a module interface. A module loaded under another
 name, as a dependency alias, cannot take its own interfaces.
 
 ### Migrate from the built-in PHP runtime
@@ -442,11 +428,10 @@ the new rules. From `v1.0.0-beta.22`, each release has an API view of its own, a
 client is generated against the `v1.0.0-beta.27` view.
 
 The `targetVersion` setting, or `--target-version`, pins a module to another release
-from `v1.0.0-beta.18` to `v1.0.0-beta.27`, which the client schema,
+only to `v1.0.0-beta.27`, which the client schema,
 `DAGGER_CLIENT_VERSION` and `dang.toml` then use. Generation refuses a value that is
-not a release, is later than `v1.0.0-beta.27` or is below `v1.0.0-beta.18`, and refuses
-a pin on a module that cannot move from the PHP runtime. The checks here pin only
-`v1.0.0-beta.24`.
+not a release or is any other release, and refuses a pin on a module that cannot
+move from the PHP runtime.
 
 `dagger.toml` records the setting for a module's scope under
 `[sdks.<name>.scopes."<path>".settings]`. `dagger generate` passes that record to
@@ -530,17 +515,6 @@ Generation fails, and applies none of its changes, in these cases:
 
 `dagger call php-sdk mod ... generate` does not know a module's clients, and
 refuses a module that has some: run `dagger generate`.
-
-## Migrate a workspace
-
-A workspace set up with a CLI before v1.0.0-beta.12 registers this SDK with a
-`[modules.php-sdk.as-sdk]` table, which newer engines ignore. Convert the table
-to the new SDK registration, then regenerate:
-
-```sh
-dagger ws migrate
-dagger generate
-```
 
 ## Skipping generation
 

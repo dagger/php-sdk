@@ -43,12 +43,6 @@ not the upstream tree's tooling files.
 The baseline holds the two errors that upstream records in `src/Client/`.
 `src/Client/` is unchanged from upstream.
 
-`src/Module/EngineNaming.php` ports part of
-[iancoleman/strcase](https://github.com/iancoleman/strcase) v0.3.0, and keeps that
-project's MIT license notice in its header. Generated modules copy `src/` and
-`LICENSE` but not this file, so the notice has to travel with the port. The rest of
-this library stays under `LICENSE`.
-
 `generated/` is not committed. `Mod` generates it for each module from the schema
-of `PhpSdk.targetEngineVersion`, and the e2e module generates it for the unit
+of `PhpSDK.targetEngineVersion`, and the e2e module generates it for the unit
 tests.
