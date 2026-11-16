@@ -24,13 +24,18 @@ class NewCodegenVisitor extends CodeWriter
 {
     /**
      * @param string[] $interfaceNames names of the schema's interface types
+     * @param array<string, string> $classNamespaces namespace of each class outside core, by class name
      */
     public function __construct(
         string $targetDirectory,
         private readonly bool $supportsNullableObjects = true,
         private readonly array $interfaceNames = [],
+        string $namespace = CodeWriter::NAMESPACE,
+        private readonly array $classNamespaces = [],
+        private readonly ?string $address = null,
+        private readonly ?string $pin = null,
     ) {
-        parent::__construct($targetDirectory);
+        parent::__construct($targetDirectory, $namespace);
     }
 
     public function visitScalar(IntrospectionType $type): void
@@ -103,6 +108,10 @@ class NewCodegenVisitor extends CodeWriter
 
     public function visitObject(IntrospectionType $type): void
     {
+        if ($type->name === 'Query' && $this->address !== null) {
+            $this->visitEntry($type);
+            return;
+        }
         $parentClass = $type->name === 'Query' ? AbstractClient::class : AbstractObject::class;
         $className = $type->name === 'Query' ? 'Client' : $type->name;
 
@@ -134,6 +143,37 @@ class NewCodegenVisitor extends CodeWriter
         }
 
         $this->write($objectClass);
+    }
+
+    /**
+     * The client's entry: a static method per Query field the target contributes,
+     * each serving the target in the shared session before it starts its query.
+     */
+    private function visitEntry(IntrospectionType $type): void
+    {
+        $entryClass = new ClassType('Client');
+        $entryClass->setFinal();
+        foreach ($type->fields as $field) {
+            $field->parentTypeName = $type->name;
+            $this->generateObjectMethod($entryClass, $field, $type);
+            $method = $entryClass->getMethod($field->name)->setStatic();
+            // A static method has no $this: the shared client and an empty chain stand in for the
+            // root's protected members. A target only adds its constructor to Query, whose body
+            // reads nothing else. GraphQL reserves the __ prefix, so no argument is $__client.
+            $rootBody = strtr($method->getBody(), [
+                '$this->client' => '$__client',
+                '$this->queryBuilderChain' => '(new \Dagger\GraphQl\QueryBuilderChain())',
+            ]);
+            $method->setBody('');
+            $method->addBody('$__client = \Dagger\Dagger::getClientInstance();');
+            $method->addBody(
+                '$__client->serve(?, ?);',
+                [$this->address, $this->pin],
+            );
+            $method->addBody($rootBody);
+        }
+
+        $this->write($entryClass);
     }
 
     public function visitInterface(IntrospectionType $type): void
@@ -515,7 +555,7 @@ class NewCodegenVisitor extends CodeWriter
 
     // ---- Formatting helpers ----
 
-    private function formatPhpClassName(string $objectName): string
+    public static function formatPhpClassName(string $objectName): string
     {
         $objectName = str_replace(['ID', 'JSON'], ['Id', 'Json'], $objectName);
 
@@ -527,7 +567,7 @@ class NewCodegenVisitor extends CodeWriter
 
     private function formatPhpFqcn(string $className): string
     {
-        return '\\' . CodeWriter::NAMESPACE . '\\' . $className;
+        return '\\' . ($this->classNamespaces[$className] ?? CodeWriter::NAMESPACE) . '\\' . $className;
     }
 
     private function formatScalarType(IntrospectionTypeRef $typeRef): string

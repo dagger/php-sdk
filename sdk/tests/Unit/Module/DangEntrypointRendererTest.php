@@ -6,30 +6,49 @@ namespace Dagger\Tests\Unit\Module;
 
 use Dagger\Module\DangEntrypointRenderer;
 use Dagger\Module\Description;
-use Dagger\Module\EngineNaming;
+use Dagger\ModuleNaming;
 use Dagger\ValueObject\DaggerEnum;
 use Dagger\ValueObject\DaggerEnumCase;
 use Dagger\ValueObject\DaggerObject;
+use Dagger\ValueObject\ListOfType;
 use Dagger\ValueObject\Type;
 use Generator;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 #[Group('unit')]
 #[CoversClass(DangEntrypointRenderer::class)]
-#[CoversClass(EngineNaming::class)]
 class DangEntrypointRendererTest extends TestCase
 {
     private const FIXTURE = __DIR__ . '/Fixture';
 
+    /**
+     * Stands in for ModuleNaming: the main object is the candidate named after
+     * the module in any case, and an enum member is its case in upper case.
+     */
+    private function naming(string $module = 'main'): ModuleNaming
+    {
+        $naming = self::createStub(ModuleNaming::class);
+        $naming->method('mainObject')->willReturnCallback(static fn(array $candidates) => array_values(array_filter(
+            $candidates,
+            static fn($name) => strcasecmp($name, $module) === 0,
+        ))[0] ?? null);
+        $naming->method('enumMemberNames')->willReturnCallback(
+            static fn(array $names) => array_map(strtoupper(...), $names),
+        );
+
+        return $naming;
+    }
+
     #[Test, DataProvider('provideTranslations')]
     public function itTranslatesMetadataToTypeDefs(string $expected): void
     {
-        $types = DangEntrypointRenderer::renderTypes(Description::fromDirectory(self::FIXTURE), 'main');
+        $types = DangEntrypointRenderer::renderTypes(Description::fromDirectory(self::FIXTURE), $this->naming());
 
         self::assertStringContainsString($expected, $types);
     }
@@ -46,6 +65,10 @@ class DangEntrypointRendererTest extends TestCase
         yield 'own object return' => ['function("withMode", typeDef.withObject("Main"))'];
         yield 'void return' => ['function("nothing", typeDef.withKind(TypeDefKind.VOID_KIND))'];
         yield 'check' => ["function(\"lint\", typeDef.withKind(TypeDefKind.VOID_KIND))\n            .withCheck"];
+        yield 'check with workspace' => ["  .withCheck\n            .withArg(\"ws\", typeDef.withObject(\"Workspace\"))"];
+        yield 'generator' => ["function(\"generate\", typeDef.withObject(\"Changeset\"))\n            .withGenerator"];
+        yield 'up' => ["function(\"serve\", typeDef.withObject(\"Service\"))\n            .withUp"];
+        yield 'agent' => ["function(\"assist\", typeDef.withObject(\"LLM\"))\n            .withAgent"];
         yield 'required argument' => ['.withArg("mode", typeDef.withEnum("Mode"))'];
         yield 'nullable argument has no default' => ['.withArg("value", typeDef.withOptional(true).withKind(TypeDefKind.STRING_KIND))'];
         yield 'string default' => ['.withArg("value", typeDef.withOptional(true).withKind(TypeDefKind.STRING_KIND), defaultValue: ("\"fallback\"" :: Dagger.JSON!))'];
@@ -59,13 +82,17 @@ class DangEntrypointRendererTest extends TestCase
         yield 'idable object' => ['.withArg("base", typeDef.withObject("Container"))'];
         yield 'enum' => ['typeDef.withEnum("Mode", description: "How fast to go.")'];
         yield 'enum member' => ['.withEnumMember("Fast", value: "fast, really", description: "As fast as it can.")'];
+        yield 'interface' => ['typeDef.withInterface("Shape", description: "Something with an area.")'];
+        yield 'interface function' => ['.withArg("scale", typeDef.withKind(TypeDefKind.INTEGER_KIND), defaultValue: ("1" :: Dagger.JSON!))'];
+        yield 'interface argument' => ['.withArg("shape", typeDef.withInterface("Shape"))'];
+        yield 'interface list return' => ['function("shapes", typeDef.withListOf(typeDef.withInterface("Shape")))'];
         yield 'constructor' => [".withConstructor(\n          function(\"\", typeDef.withObject(\"Main\"))"];
     }
 
     #[Test]
     public function itOmitsWhatIsNotExposed(): void
     {
-        $types = DangEntrypointRenderer::renderTypes(Description::fromDirectory(self::FIXTURE), 'main');
+        $types = DangEntrypointRenderer::renderTypes(Description::fromDirectory(self::FIXTURE), $this->naming());
 
         self::assertStringNotContainsString('notExposed', $types);
         self::assertStringNotContainsString('"null"', $types);
@@ -76,12 +103,31 @@ class DangEntrypointRendererTest extends TestCase
     {
         $description = Description::fromDirectory(self::FIXTURE);
 
-        $asMain = DangEntrypointRenderer::renderTypes($description, 'main');
+        $asMain = DangEntrypointRenderer::renderTypes($description, $this->naming());
         self::assertSame(1, substr_count($asMain, '.withConstructor('));
 
-        $asHelper = DangEntrypointRenderer::renderTypes($description, 'helper');
+        $asHelper = DangEntrypointRenderer::renderTypes($description, $this->naming('helper'));
         self::assertSame(1, substr_count($asHelper, '.withConstructor('));
         self::assertStringContainsString('function("", typeDef.withObject("Helper"))', $asHelper);
+    }
+
+    #[Test]
+    public function itWritesNoConstructorWhenTheEngineFindsNoMainObject(): void
+    {
+        $types = DangEntrypointRenderer::renderTypes(Description::fromDirectory(self::FIXTURE), $this->naming('other'));
+
+        self::assertStringNotContainsString('.withConstructor(', $types);
+    }
+
+    #[Test]
+    public function itRethrowsAnotherTypeError(): void
+    {
+        $naming = self::createStub(ModuleNaming::class);
+        $naming->method('mainObject')->willThrowException(new \TypeError('something else'));
+
+        self::expectExceptionObject(new \TypeError('something else'));
+
+        DangEntrypointRenderer::renderTypes(Description::fromDirectory(self::FIXTURE), $naming);
     }
 
     #[Test]
@@ -91,7 +137,7 @@ class DangEntrypointRendererTest extends TestCase
 
         self::assertStringContainsString(
             'function("", typeDef.withObject("Helper"))',
-            DangEntrypointRenderer::renderTypes($description, 'helper'),
+            DangEntrypointRenderer::renderTypes($description, $this->naming('helper')),
         );
     }
 
@@ -105,94 +151,26 @@ class DangEntrypointRendererTest extends TestCase
 
         self::assertStringContainsString(
             'description: "says \"hi\"\nto $you and é\\\\"',
-            DangEntrypointRenderer::renderTypes($description, 'helper'),
+            DangEntrypointRenderer::renderTypes($description, $this->naming('helper')),
         );
     }
 
-    #[Test, DataProvider('provideCollidingCases')]
-    public function itRefusesCasesTheEngineWouldMerge(string $first, string $second, string $name): void
+    #[Test]
+    public function itRefusesCasesTheEngineNamesAlike(): void
     {
         self::expectException(RuntimeException::class);
-        self::expectExceptionMessage(sprintf(
-            'its cases %s and %s the same name, %s',
-            addcslashes($first, "\x80..\xff"),
-            addcslashes($second, "\x80..\xff"),
-            $name,
-        ));
+        self::expectExceptionMessage('its cases Low and LOW the same name, LOW');
 
-        DangEntrypointRenderer::renderTypes(self::enumOf('Other', $first, $second), 'main');
-    }
-
-    /** @return Generator<string, array{string, string, string}> */
-    public static function provideCollidingCases(): Generator
-    {
-        yield 'differing by case' => ['Low', 'LOW', 'LOW'];
-        yield 'a word boundary and an underscore' => ['FooBar', 'FOO_BAR', 'FOO_BAR'];
-        yield 'two spellings of a boundary' => ['FooBar', 'Foo_Bar', 'FOO_BAR'];
-        yield 'a leading no-break space' => ["\u{00A0}LOW", 'LOW', 'LOW'];
-        yield 'a trailing ideographic space' => ['Low', "Low\u{3000}", 'LOW'];
-        yield 'a trimmed name reaching a boundary' => ["\u{00A0}A1", 'A_1', 'A_1'];
-    }
-
-    #[Test, DataProvider('provideDistinctCases')]
-    public function itAcceptsCasesTheEngineKeepsApart(string ...$cases): void
-    {
-        $types = DangEntrypointRenderer::renderTypes(self::enumOf(...$cases), 'main');
-
-        foreach ($cases as $case) {
-            self::assertStringContainsString(sprintf('.withEnumMember("%s")', $case), $types);
-        }
-    }
-
-    /** @return Generator<string, list<string>> */
-    public static function provideDistinctCases(): Generator
-    {
-        yield 'ordinary cases' => ['Low', 'High'];
-        yield 'with and without a boundary' => ['FOOBAR', 'FOO_BAR'];
-        yield 'mixed and upper case' => ['FooBar', 'FOOBAR'];
-        yield 'a word boundary only in one' => ['ReadOnly', 'READONLY'];
-        yield 'a digit boundary only in one' => ['Foo1', 'FOO1'];
-        yield 'one and two underscores' => ['Foo_Bar', 'Foo__Bar'];
-        yield 'a leading underscore' => ['_Low', 'Low'];
-        yield 'an underscore before a digit' => ['A1', 'A_1'];
-        yield 'several' => ['Low', 'Medium', 'High'];
-        yield 'a trimmed name that keeps its boundary' => ["\u{00A0}A1", 'A1'];
-        yield 'a no-break space inside a name' => ["Lo\u{00A0}w", 'Low'];
-        yield 'a zero width space, which is not trimmed' => ["\u{200B}LOW", 'LOW'];
+        DangEntrypointRenderer::renderTypes(self::enumOf('Low', 'LOW'), $this->naming());
     }
 
     #[Test]
-    public function itRefusesCollidingCasesFoundInPhpSource(): void
+    public function itAcceptsCasesTheEngineNamesApart(): void
     {
-        $directory = sys_get_temp_dir() . '/' . uniqid('dagger-enum-', true);
-        mkdir($directory);
-        $file = "$directory/SpacedLevel.php";
-        file_put_contents($file, <<<PHP
-            <?php
-            namespace DaggerModule;
-            #[\\Dagger\\Attribute\\DaggerObject]
-            enum SpacedLevel
-            {
-                case \u{00A0}LOW;
-                case LOW;
-            }
-            PHP);
-        require_once $file;
+        $types = DangEntrypointRenderer::renderTypes(self::enumOf('Low', 'High'), $this->naming());
 
-        try {
-            $description = Description::fromDirectory($directory);
-        } finally {
-            unlink($file);
-            rmdir($directory);
-        }
-
-        self::assertSame(["\u{00A0}LOW", 'LOW'], array_map(
-            static fn($case) => $case->name,
-            $description->enums[0]->cases,
-        ));
-        self::expectExceptionMessage('its cases \302\240LOW and LOW the same name, LOW');
-
-        DangEntrypointRenderer::renderTypes($description, 'main');
+        self::assertStringContainsString('.withEnumMember("Low")', $types);
+        self::assertStringContainsString('.withEnumMember("High")', $types);
     }
 
     private static function enumOf(string ...$cases): Description
@@ -215,7 +193,37 @@ class DangEntrypointRendererTest extends TestCase
         self::expectException(RuntimeException::class);
         self::expectExceptionMessage('Currently cannot handle custom interfaces');
 
-        DangEntrypointRenderer::renderTypes($description, 'my-module');
+        DangEntrypointRenderer::renderTypes($description, $this->naming());
+    }
+
+    #[Test]
+    public function itRefusesInterfaceFields(): void
+    {
+        $description = new Description([new DaggerObject(
+            name: 'DaggerModule\\MyModule',
+            fields: [new \Dagger\ValueObject\DaggerField('shape', null, new Type(\DaggerModule\Shape::class))],
+        )]);
+
+        self::expectException(RuntimeException::class);
+        self::expectExceptionMessage('Currently cannot handle custom interfaces: DaggerModule\\Shape');
+
+        DangEntrypointRenderer::renderTypes($description, $this->naming());
+    }
+
+    #[Test]
+    #[RunInSeparateProcess]
+    public function itRefusesClientTypes(): void
+    {
+        class_alias(\stdClass::class, 'Dagger\\Clients\\FileLister\\FileLister');
+        $description = new Description([new DaggerObject(
+            name: 'DaggerModule\\MyModule',
+            fields: [new \Dagger\ValueObject\DaggerField('lister', null, new ListOfType(new Type('Dagger\\Clients\\FileLister\\FileLister')))],
+        )]);
+
+        self::expectException(RuntimeException::class);
+        self::expectExceptionMessage('The type Dagger\\Clients\\FileLister\\FileLister comes from the module client FileLister');
+
+        DangEntrypointRenderer::renderTypes($description, $this->naming());
     }
 
     #[Test]
@@ -224,13 +232,28 @@ class DangEntrypointRendererTest extends TestCase
         $main = DangEntrypointRenderer::renderMain('v1.0.0-beta.21');
 
         self::assertStringStartsWith("# Code generated by dagger. DO NOT EDIT.\n", $main);
-        self::assertStringContainsString('pub types(workspace: Workspace!): [TypeDef!]!', $main);
+        self::assertStringContainsString(
+            "pub sources(workspace: Workspace!): Directory! {\n"
+                . "    directory.withDirectory(workspace.cwd, workspace.directory(\".\", exclude: [\"**/.git\", \"vendor\"], gitignore: true))\n"
+                . "  }",
+            $main,
+        );
+        self::assertStringContainsString('pub types: [TypeDef!]!', $main);
+        self::assertStringNotContainsString('workspace: Workspace!,', $main);
         self::assertStringContainsString('callDigest: String,', $main);
         self::assertStringContainsString('.withEnvVariable("DAGGER_CLIENT_VERSION", "v1.0.0-beta.21")', $main);
         self::assertStringContainsString('.withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")', $main);
         self::assertStringContainsString('"sdk/bin/dagger-module", "call"', $main);
-        self::assertStringContainsString('experimentalPrivilegedNesting: true', $main);
-        self::assertStringContainsString('PhpModuleBuild(source: currentModule.source).installed', $main);
+        self::assertStringContainsString('experimentalPrivilegedNesting: true)', $main);
+        self::assertStringContainsString('.file("/dagger/result.json")', $main);
+        self::assertStringContainsString('.contents rescue {', $main);
+        self::assertStringContainsString('err: GraphQLError =>', $main);
+        self::assertStringContainsString('{ raise err }', $main);
+        self::assertStringContainsString('raise stderr', $main);
+        self::assertStringContainsString(
+            'PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed',
+            $main,
+        );
     }
 
     #[Test]
@@ -239,9 +262,9 @@ class DangEntrypointRendererTest extends TestCase
         $output = sys_get_temp_dir() . '/' . uniqid('dagger-entrypoint-', true);
         $description = Description::fromDirectory(self::FIXTURE);
 
-        DangEntrypointRenderer::write($description, 'main', 'v1.0.0-beta.21', $output);
+        DangEntrypointRenderer::write($description, $this->naming(), 'v1.0.0-beta.21', $output);
         $first = [file_get_contents("$output/main.dang"), file_get_contents("$output/types.dang")];
-        DangEntrypointRenderer::write($description, 'main', 'v1.0.0-beta.21', $output);
+        DangEntrypointRenderer::write($description, $this->naming(), 'v1.0.0-beta.21', $output);
         $second = [file_get_contents("$output/main.dang"), file_get_contents("$output/types.dang")];
 
         unlink("$output/main.dang");

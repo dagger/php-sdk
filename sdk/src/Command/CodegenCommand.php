@@ -6,10 +6,12 @@ use Dagger\Codegen\Codegen;
 use Dagger\Codegen\Introspection\IntrospectionSchema;
 use Dagger\Codegen\SchemaGenerator;
 use Dagger\Connection;
+use InvalidArgumentException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
@@ -41,11 +43,34 @@ class CodegenCommand extends Command
             'Path to the schema json file',
             null
         );
+        $this->addOption(
+            'client',
+            null,
+            InputOption::VALUE_REQUIRED,
+            'Generate the types and fields the module contributes, into generated/Clients',
+        );
+        $this->addOption(
+            'address',
+            null,
+            InputOption::VALUE_REQUIRED,
+            'The address the client serves its module from, with --client',
+        );
+        $this->addOption(
+            'pin',
+            null,
+            InputOption::VALUE_REQUIRED,
+            'The commit a Git address is pinned to, with --client',
+        );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
+        $module = $input->getOption('client');
+        $address = $input->getOption('address');
+        if (($module === null) !== ($address === null) || ($module === null && $input->getOption('pin') !== null)) {
+            throw new InvalidArgumentException('--client needs --address, and --address and --pin need --client');
+        }
 
         if ($input->getOption('schema-file') !== null && file_exists($input->getOption('schema-file'))) {
             $fileContents = file_get_contents($input->getOption('schema-file'));
@@ -56,7 +81,7 @@ class CodegenCommand extends Command
             $schema = (new SchemaGenerator($client))->getSchema();
         }
 
-        $codegen = new Codegen($schema, self::WRITE_DIR, $io);
+        $codegen = new Codegen($schema, self::WRITE_DIR, $io, $module, $address, $input->getOption('pin'));
         $codegen->generate();
 
         return Command::SUCCESS;

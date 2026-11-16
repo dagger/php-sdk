@@ -5,6 +5,7 @@ use Dagger\Dagger;
 use Dagger\Module\CallDispatcher;
 use Dagger\Module\DangEntrypointRenderer;
 use Dagger\Module\Description;
+use Dagger\Module\InterfaceClients;
 use Dagger\Module\ValueCodec;
 use GraphQL\Exception\QueryError;
 
@@ -48,12 +49,11 @@ $options = options(array_slice($argv, 2));
 try {
     switch ($mode) {
         case 'generate':
-            DangEntrypointRenderer::write(
-                Description::fromDirectory(getcwd() . '/src'),
-                required($options, 'name'),
-                required($options, 'client-version'),
-                required($options, 'output'),
-            );
+            $clientVersion = required($options, 'client-version');
+            $description = Description::fromDirectory(getcwd() . '/src');
+            $naming = Dagger::getClientInstance()->naming($clientVersion)->module(required($options, 'name'));
+            DangEntrypointRenderer::write($description, $naming, $clientVersion, required($options, 'output'));
+            InterfaceClients::write($description, getcwd() . '/sdk/generated/ModuleInterfaces', $naming);
             break;
         case 'call':
             $output = required($options, 'output');

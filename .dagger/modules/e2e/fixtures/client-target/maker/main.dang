@@ -1,0 +1,11 @@
+"""
+A client target that returns a core Directory.
+"""
+type FileMaker {
+  """
+  A directory with one HTML file per name.
+  """
+  pub writeHtml(names: [String!]!): Directory! {
+    names.reduce(directory) { dir, name => dir.withNewFile(name + ".html", name) }
+  }
+}

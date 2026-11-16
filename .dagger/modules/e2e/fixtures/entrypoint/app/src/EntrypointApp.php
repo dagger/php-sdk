@@ -5,8 +5,14 @@ declare(strict_types=1);
 namespace DaggerModule;
 
 use Dagger\Attribute;
+use Dagger\Changeset;
 use Dagger\Directory;
+use Dagger\LLM;
+use Dagger\Service;
+use Dagger\Workspace;
 use RuntimeException;
+
+use function Dagger\dag;
 
 #[Attribute\DaggerObject]
 class EntrypointApp
@@ -78,6 +84,12 @@ class EntrypointApp
     }
 
     #[Attribute\DaggerFunction]
+    public function hasFile(string $path): bool
+    {
+        return file_exists(dirname(__DIR__) . '/' . $path);
+    }
+
+    #[Attribute\DaggerFunction]
     public function fail(): string
     {
         throw new RuntimeException('the fixture failed on purpose');
@@ -85,7 +97,28 @@ class EntrypointApp
 
     #[Attribute\DaggerFunction]
     #[Attribute\Check]
-    public function selfCheck(): void
+    public function selfCheck(Workspace $ws): void
     {
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Generate]
+    public function selfGenerate(): Changeset
+    {
+        return dag()->directory()->withNewFile('generated.txt', 'generated')->changes(dag()->directory());
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Up]
+    public function selfUp(): Service
+    {
+        return dag()->container()->from('alpine')->asService();
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Agent]
+    public function selfAgent(LLM $base): LLM
+    {
+        return $base;
     }
 }

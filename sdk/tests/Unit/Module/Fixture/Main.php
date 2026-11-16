@@ -5,10 +5,14 @@ declare(strict_types=1);
 namespace DaggerModule;
 
 use Dagger\Attribute;
+use Dagger\Changeset;
 use Dagger\Container;
 use Dagger\Directory;
 use Dagger\Json;
+use Dagger\LLM;
 use Dagger\Platform;
+use Dagger\Service;
+use Dagger\Workspace;
 use RuntimeException;
 
 #[Attribute\DaggerObject]
@@ -129,8 +133,29 @@ class Main
 
     #[Attribute\DaggerFunction]
     #[Attribute\Check]
-    public function lint(): void
+    public function lint(Workspace $ws): void
     {
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Generate]
+    public function generate(Workspace $workspace): Changeset
+    {
+        return $workspace->directory('.')->changes($workspace->directory('.'));
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Up]
+    public function serve(Workspace $workspace): Service
+    {
+        return $workspace->directory('.')->dockerBuild()->asService();
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\Agent]
+    public function assist(LLM $base, Workspace $workspace): LLM
+    {
+        return $base;
     }
 
     #[Attribute\DaggerFunction]
@@ -148,5 +173,18 @@ class Main
     public function container(Container $base): Container
     {
         return $base;
+    }
+
+    #[Attribute\DaggerFunction]
+    public function area(Shape $shape): int
+    {
+        return $shape->area();
+    }
+
+    #[Attribute\DaggerFunction]
+    #[Attribute\ReturnsListOfType(Shape::class)]
+    public function shapes(Shape $shape): array
+    {
+        return [$shape];
     }
 }

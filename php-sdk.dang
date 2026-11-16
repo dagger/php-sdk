@@ -1,7 +1,7 @@
 """
 Manage Dagger modules that use the PHP SDK.
 """
-type PhpSdk {
+type PhpSDK {
   # Matches `"sdk": { "source": "php" }` in a legacy dagger.json.
   let legacyConfigPattern = "\"sdk\"\\s*:\\s*\\{[^}]*\"source\"\\s*:\\s*\"php\""
 
@@ -17,22 +17,22 @@ type PhpSdk {
   pub skipGenerateFilename: String! = ".dagger-php-sdk-skip-generate"
 
   """
-  Starter template under templates/<template> for a new module.
+  Starter template under templates/<template> for a module without composer.json.
   """
-  pub template: String! = "minimal"
+  pub template: String! = "default"
 
   """
-  The engine release a module's generated code targets: the floor or later, and
-  the release this SDK generates for or earlier. Empty takes the release this SDK
-  generates for.
+  Whether a module gets the global client, Dagger\dag(). Unset, a module moved
+  from the built-in PHP runtime, whose code calls dag(), gets it, as does one
+  whose sdk/ already has it; a new module does not.
   """
-  pub targetVersion: String! = ""
+  pub globalClient: Boolean
 
   """
   Find the PHP client root containing the workspace cwd: the directory of the
-  nearest composer.json, relative to the workspace root. A module's vendored
-  SDK carries its own composer.json under sdk/, so the module owning it answers
-  instead. Null when there is none.
+  nearest composer.json, relative to the workspace root. A module's or a PHP
+  program's vendored SDK carries its own composer.json under sdk/, so the
+  module or program owning it answers instead. Null when there is none.
   """
   pub findClientRoot(ws: Workspace!): String {
     let found = ws.findUp("composer.json")
@@ -41,7 +41,8 @@ type PhpSdk {
     } else {
       let root = normalizePath(found.trimSuffix("composer.json"))
       let vendorParent = if (root == "sdk") { "." } else { root.trimSuffix("/sdk") }
-      if (vendorParent != root and hasModuleConfig(ws, vendorParent)) {
+      let ownedByProgram = hasFile(ws, vendorParent, "composer.json") and modAt(vendorParent, ws, "").ownsSdk
+      if (vendorParent != root and (hasModuleConfig(ws, vendorParent) or ownedByProgram)) {
         vendorParent
       } else {
         root
@@ -51,126 +52,109 @@ type PhpSdk {
 
   """
   Generate one SDK scope: the module at the workspace cwd, when the scope is a
-  module. A scope without a module config is first seeded from the `template`
-  setting, keeping the files already there, and given a dagger-module.toml. A
-  self-contained module then moves to the entrypoint this SDK generates; see
-  Mod.usesEntrypoint. Module clients are not generated yet.
+  module. A scope without a module config is given a dagger-module.toml. A
+  self-contained module then moves to the entrypoint this SDK generates, seeded
+  from the `template` setting when it has no composer.json, and any other module
+  on the PHP runtime is refused; see Mod.usesEntrypoint. The module's clients are generated into its sdk/. A scope
+  without a module is a PHP program: its clients are generated the same way, and
+  an sdk/ this SDK wrote is regenerated once they are all removed.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
     checkEngine
-    if (clients.length > 0) {
-      raise "php-sdk does not generate module clients yet"
-    }
-
     if (isModule == false) {
-      ws
+      let scope = normalizePath(ws.cwd)
+      # The core schema is read through a Dang manifest, which needs a name.
+      let manifestName = if (name == "") { "php-program" } else { name }
+      modAt(scope, ws, manifestName, subject: "the PHP program at " + scope, clients: clients).programGenerated.withWorkdir(scope)
     } else {
       let scope = normalizePath(ws.cwd)
       # Mod.rootPath is workspace-root-relative, so the scope is generated from
       # the root and the cwd restored afterwards: the engine rejects a result
       # whose cwd is not the scope.
-      let rooted = ws.withWorkdir(".")
-      let target = targetRelease("module \"" + name + "\"")
-      let selectedTemplate = if (template == "") { "minimal" } else { template }
-      let initialized = if (hasModuleConfig(ws, scope)) {
-        rooted
-      } else if (currentModule.source.exists("templates/" + selectedTemplate) == false) {
-        raise "unknown init template: " + template
-      } else {
-        sdkHelpers.moduleManifest
-          .withName(name: name)
-          .withLegacyRuntime(runtime: "php", engineVersion: target)
-          .generate(
-            rooted.withDirectory(scope, renderedTemplate(name, selectedTemplate)).withWorkdir(scope),
-            legacyJson: false,
-          )
-          .withWorkdir(".")
-      }
-      targetedMod(scope, initialized, name, "module \"" + name + "\"").generated.withWorkdir(scope)
+      let created = hasModuleConfig(ws, scope) == false
+      modAt(scope, ws.withWorkdir("."), name, subject: "module \"" + name + "\"", clients: clients, created: created).generated.withWorkdir(scope)
     }
   }
 
   """
-  The engine API version a new module declares: the last release before the
-  identifier-casing cut, which dagger/dagger gates at v1.0.0-beta.26 and which
-  renames core API fields and changes module naming. It stays before that cut until
-  the PHP codegen is ported to those rules. Released engines compare base versions,
-  so older engines load it. The module's client schema, its DAGGER_CLIENT_VERSION
-  and its dang.toml use this one value. Moving it across that cut also means
-  checking the naming that sdk/src/Module/EngineNaming.php mirrors.
+  The engine release this SDK generates for, which is also the oldest engine it
+  runs on. The module's client schema, its DAGGER_CLIENT_VERSION and its
+  dang.toml use this one value.
   """
-  let targetEngineVersion: String! = "v1.0.0-beta.25"
+  let targetEngineVersion: String! = "v1.0.0-beta.27"
 
   """
-  The oldest release the generated entrypoint passed on, for modules targeting
-  v1.0.0-beta.21. It has not run again with the current target.
+  The template the `template` setting names, `default` when it is empty.
   """
-  let floorEngineVersion: String! = "v1.0.0-beta.17"
-
-  """
-  Whether the running engine is below the floor. Released engines compare base
-  versions, so the manifest's engineVersion does not keep an older v1.0.0
-  prerelease out. A dev build or a later release is not below it.
-  """
-  let belowEngineFloor: Boolean! {
-    let prefix = "v1.0.0-beta."
-    let release = version.split("+")[0] ?? version
-    let beta = release.trimPrefix(prefix)
-    let floor = floorEngineVersion.trimPrefix(prefix)
-    release.hasPrefix("v0.") or release.hasPrefix("v1.0.0-0") or
-      (beta != release and beta.containsMatch("^[0-9]+$") and beta.padLeft(6) < floor.padLeft(6))
+  let selectedTemplate: String! {
+    if (template == "") { "default" } else { template }
   }
 
+  """
+  Refuses an engine older than targetEngineVersion. Released engines compare
+  base versions, so the manifest's engineVersion does not keep an older v1.0.0
+  prerelease out. A dev build sorts after the releases it could be older than.
+  """
   let checkEngine: Void {
-    if (belowEngineFloor) {
-      raise "php-sdk needs an engine from " + floorEngineVersion + ", and this one is " + version + ": upgrade the engine"
+    if (releasePrecedes(version, targetEngineVersion)) {
+      raise "php-sdk needs an engine from " + targetEngineVersion + ", and this one is " + version + ": upgrade the engine"
     }
     null
   }
 
-  let modAt(path: String!, ws: Workspace!, name: String!, target: String! = targetEngineVersion): Mod! {
+  """
+  The module at path. A client module that declares a release before the
+  identifier-casing cut is refused, as subject's client; see
+  checkClientReleases.
+  """
+  let modAt(path: String!, ws: Workspace!, name: String!, subject: String! = "", clients: [ModuleSource!] = null, created: Boolean! = false, globalSetting: Boolean = globalClient): Mod! {
+    checkClientReleases(subject, clients ?? ([] :: [ModuleSource!]!))
     Mod(
       rootPath: path,
       ws: ws,
       skipGenerateFilename: skipGenerateFilename,
-      targetEngineVersion: target,
+      targetEngineVersion: targetEngineVersion,
       givenName: name,
+      templateName: selectedTemplate,
+      template: templates.filter { listed => listed.name == selectedTemplate }[0],
+      declaresLaterEngine: declaresLaterEngine(ws, path),
+      clients: clients,
+      globalClientSetting: globalSetting,
+      created: created,
     )
   }
 
   """
-  The module at path, generating for targetRelease. A pin on a module that keeps
-  the PHP runtime is refused: the engine regenerates that module for its
-  manifest's engineVersion.
+  Whether the module config in a workspace-root-relative directory declares an
+  engineVersion later than targetEngineVersion. Mod reads its own manifest, but
+  only PhpSDK can compare releases.
   """
-  let targetedMod(path: String!, ws: Workspace!, name: String!, subject: String!): Mod! {
-    let target = targetRelease(subject)
-    let mod = modAt(path, ws, name, target)
-    if (targetVersion != "" and mod.skipGenerate == false and mod.usesEntrypoint == false) {
-      raise subject + " pins targetVersion " + target + ", which applies to the generated entrypoint only: this module keeps the PHP runtime, which generates for the engineVersion of its manifest. Remove targetVersion from the scope's settings in dagger.toml"
+  let declaresLaterEngine(ws: Workspace!, dir: String!): Boolean! {
+    let path = moduleConfigPath(ws, dir)
+    if (path == "") { return false }
+    let contents = ws.directory("/", include: [path]).file(path).contents
+    let raw = if (path.hasSuffix(".toml")) { JSON.encode(TOML.decode(contents)) } else { contents }
+    let declared = json.withContents((raw :: Dagger.JSON!)).field(["engineVersion"]).asString rescue {
+      err: Error => ""
     }
-    mod
+    releasePrecedes(targetEngineVersion, declared)
   }
 
   """
-  The release a module generates for. A targetVersion this SDK cannot generate for
-  is refused before anything is written.
+  Refuses a client module that declares a release before the identifier-casing
+  cut at v1.0.0-beta.26. The engine names a client module by the rules of the
+  release it declares, whatever the view of the session that serves it, and its
+  client uses the names of targetEngineVersion.
   """
-  let targetRelease(subject: String!): String! {
-    if (targetVersion == "") { return targetEngineVersion }
-    let fix = "Set targetVersion between " + floorEngineVersion + " and " + targetEngineVersion + " in the scope's settings in dagger.toml, or remove it"
-    if (targetVersion.containsMatch(Regexp(releasePattern)) == false) {
-      raise subject + " pins targetVersion " + JSON.encode(targetVersion) + ", which is not a Dagger release such as " + targetEngineVersion + ". " + fix
+  let checkClientReleases(subject: String!, clients: [ModuleSource!]!): Void {
+    clients.each { client =>
+      let declared = client.engineVersion
+      if (releasePrecedes(declared, "v1.0.0-beta.26")) {
+        raise subject + " has the client " + client.moduleName + ", which declares " + declared + ", before the identifier-casing cut at v1.0.0-beta.26: the engine names it by the rules of " + declared + ", and its client would use the names of " + targetEngineVersion + ". Set the client module's engineVersion to " + targetEngineVersion + ", or remove the client"
+      }
+      null
     }
-    let bare = targetVersion.split("+")[0] ?? targetVersion
-    let target = if (bare.hasPrefix("v")) { bare } else { "v" + bare }
-    if (releasePrecedes(target, floorEngineVersion)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the PHP SDK cannot generate for: it is below " + floorEngineVersion + ", the oldest engine this SDK runs on. " + fix
-    }
-    if (releasePrecedes(targetEngineVersion, target)) {
-      raise subject + " pins targetVersion " + target + ", which this release of the PHP SDK cannot generate for: it targets " + targetEngineVersion + " at most. " + fix + ", or install the SDK release built for " + target
-    }
-    target
+    null
   }
 
   """v?MAJOR.MINOR.PATCH, then an optional prerelease and build, as in the Go SDK."""
@@ -222,10 +206,21 @@ type PhpSdk {
   Whether a module config exists in a workspace-root-relative directory.
   """
   let hasModuleConfig(ws: Workspace!, dir: String!): Boolean! {
-    moduleConfigFilenames.filter { filename =>
-      let path = if (dir == ".") { filename } else { dir + "/" + filename }
-      ws.directory("/", include: [path]).exists(path)
-    }.length > 0
+    moduleConfigPath(ws, dir) != ""
+  }
+
+  """
+  The module config in a workspace-root-relative directory, dagger-module.toml
+  first, or an empty string when there is none.
+  """
+  let moduleConfigPath(ws: Workspace!, dir: String!): String! {
+    let filename = moduleConfigFilenames.filter { filename => hasFile(ws, dir, filename) }[0] ?? ""
+    if (filename == "" or dir == ".") { filename } else { dir + "/" + filename }
+  }
+
+  let hasFile(ws: Workspace!, dir: String!, filename: String!): Boolean! {
+    let path = if (dir == ".") { filename } else { dir + "/" + filename }
+    ws.directory("/", include: [path]).exists(path)
   }
 
   let normalizePath(path: String!): String! {
@@ -236,26 +231,17 @@ type PhpSdk {
   """
   Return init templates tracked by this module.
 
-  Templates live under templates/<name> and are materialized into a new module
-  before generation. The `template` setting selects one; empty selects the
-  default.
+  Templates live under templates/<name>, over the files of templates/common,
+  and are materialized into a new module before generation. The `template`
+  setting selects one; empty selects the default.
   """
   pub templates: [Template!]! {
-    if (currentModule.source.exists("templates")) {
-      let root = currentModule.source.directory("templates")
-      root.entries.map { name =>
-        Template(
-          name: name.trimSuffix("/"),
-          source: root.directory(name),
-        )
-      }
-    } else {
-      directory.entries.map { name =>
-        Template(
-          name: name,
-          source: directory,
-        )
-      }
+    let root = currentModule.source.directory("templates")
+    root.entries.filter { name => name != "common/" }.map { name =>
+      Template(
+        name: name.trimSuffix("/"),
+        source: root.directory("common").withDirectory(".", root.directory(name)),
+      )
     }
   }
 
@@ -287,7 +273,19 @@ type PhpSdk {
       normalizePath(path)
     }
 
-    targetedMod(modPath, ws, "", "module at " + modPath)
+    # The engine passes a scope's settings only when it generates the scope itself.
+    let recorded = if (globalClient == null) {
+      # A workspace that installs this module without an [sdks] entry has no
+      # record to read. The engine names no such state, only this error
+      # (dagger/dagger v1.0.0-beta.27 core/schema/workspace_sdk.go
+      # installedSDKSource), and Workspace.sdks lists SDKs by their own name.
+      ws.sdk(name: currentModule.name).scopeSetting(path: "/" + modPath, key: "globalClient") rescue {
+        err: Error => if (err.message.contains("is not installed as an SDK")) { null } else { raise err }
+      }
+    } else {
+      null
+    }
+    modAt(modPath, ws, "", globalSetting: if (recorded == null) { globalClient } else { recorded.asBoolean })
   }
 
   """
@@ -328,22 +326,5 @@ type PhpSdk {
       )
       .{{id}}
       .length > 0
-  }
-
-  """
-  Render a PHP template with the requested module name.
-  """
-  let renderedTemplate(name: String!, templateName: String!): Directory! {
-    container
-      .from("golang:1.25-alpine")
-      .withoutEntrypoint
-      .withMountedCache("/go/pkg/mod", cacheVolume("go-mod"))
-      .withMountedCache("/root/.cache/go-build", cacheVolume("go-build"))
-      .withDirectory("/helper", currentModule.source.directory("helpers/render-template"))
-      .withDirectory("/template", currentModule.source.directory("templates/" + templateName))
-      .withWorkdir("/helper")
-      .withExec(["go", "build", "-o", "/usr/local/bin/render-template", "."])
-      .withExec(["render-template", name, "/template", "/rendered"])
-      .directory("/rendered")
   }
 }

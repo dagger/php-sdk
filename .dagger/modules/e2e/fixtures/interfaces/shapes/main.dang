@@ -1,0 +1,36 @@
+"""
+Two objects that match the geometry module's interface without depending on it.
+"""
+type Shapes {
+  pub square(side: Int!): Square! {
+    Square(side)
+  }
+
+  pub circle(radius: Int!): Circle! {
+    Circle(radius)
+  }
+}
+
+type Square {
+  pub side: Int!
+
+  pub name: String! {
+    "square"
+  }
+
+  pub area(scale: Int!): Int! {
+    side * side * scale
+  }
+}
+
+type Circle {
+  pub radius: Int!
+
+  pub name: String! {
+    "circle"
+  }
+
+  pub area(scale: Int!): Int! {
+    3 * radius * radius * scale
+  }
+}

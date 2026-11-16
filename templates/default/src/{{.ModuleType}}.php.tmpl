@@ -1,0 +1,42 @@
+<?php
+
+declare(strict_types=1);
+
+namespace DaggerModule;
+
+use Dagger\Attribute\DaggerFunction;
+use Dagger\Attribute\DaggerObject;
+use Dagger\Attribute\Doc;
+use Dagger\Container;
+use Dagger\Directory;
+use Dagger\Workspace;
+
+use function Dagger\core;
+
+#[DaggerObject]
+class {{ .ModuleType }}
+{
+    #[DaggerFunction]
+    #[Doc('Image the build runs on')]
+    public string $baseImageAddress;
+
+    private Directory $source;
+
+    #[DaggerFunction]
+    public function __construct(Workspace $ws, string $baseImageAddress = 'alpine:3.24')
+    {
+        $this->baseImageAddress = $baseImageAddress;
+        $this->source = $ws->directory('/', exclude: ['**/.dagger', '**/.git'], gitignore: true);
+    }
+
+    #[DaggerFunction]
+    #[Doc('A container with the workspace source, ready to build')]
+    public function container(): Container
+    {
+        return core()
+            ->container()
+            ->from($this->baseImageAddress)
+            ->withDirectory('/src', $this->source)
+            ->withWorkdir('/src');
+    }
+}

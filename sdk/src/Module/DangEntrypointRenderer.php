@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dagger\Module;
 
+use Dagger\ModuleNaming;
 use Dagger\Service\NormalizesClassName;
 use Dagger\TypeDefKind;
 use Dagger\ValueObject\Argument;
@@ -13,6 +14,7 @@ use Dagger\ValueObject\DaggerObject;
 use Dagger\ValueObject\ListOfType;
 use Dagger\ValueObject\Type;
 use RuntimeException;
+use TypeError;
 
 final readonly class DangEntrypointRenderer
 {
@@ -29,7 +31,7 @@ final readonly class DangEntrypointRenderer
 
     public static function write(
         Description $description,
-        string $moduleName,
+        ModuleNaming $naming,
         string $clientVersion,
         string $output,
     ): void {
@@ -37,18 +39,35 @@ final readonly class DangEntrypointRenderer
             throw new RuntimeException("Cannot create the directory $output");
         }
 
-        file_put_contents("$output/types.dang", self::renderTypes($description, $moduleName));
+        file_put_contents("$output/types.dang", self::renderTypes($description, $naming));
         file_put_contents("$output/main.dang", self::renderMain($clientVersion));
     }
 
-    public static function renderTypes(Description $description, string $moduleName): string
+    public static function renderTypes(Description $description, ModuleNaming $naming): string
     {
+        $objects = array_filter($description->objects, static fn($object) => !$object->isInterface());
+        try {
+            $mainObject = $naming->mainObject(array_values(array_map(
+                static fn($object) => NormalizesClassName::trimLeadingNamespace($object->name),
+                $objects,
+            )));
+        } catch (TypeError $e) {
+            // The generated client types a nullable String as string, so the
+            // engine's null, no main object, arrives as this error.
+            if (!str_contains($e->getMessage(), 'mainObject(): Return value must be of type string, null returned')) {
+                throw $e;
+            }
+            $mainObject = null;
+        }
         $entries = [
             ...array_map(
-                static fn($object) => self::object($object, $moduleName),
+                static fn($object) => self::object($object, $mainObject),
                 $description->objects,
             ),
-            ...array_map(self::enum(...), $description->enums),
+            ...array_map(
+                static fn($enum) => self::enum($enum, $naming),
+                $description->enums,
+            ),
         ];
 
         $body = '';
@@ -62,17 +81,19 @@ final readonly class DangEntrypointRenderer
 
     public static function renderMain(string $clientVersion): string
     {
-        return self::HEADER . strtr(self::MAIN, ['%clientVersion%' => self::quote($clientVersion)]);
+        return self::HEADER . str_replace('%clientVersion%', self::quote($clientVersion), self::MAIN);
     }
 
     /** @return list<string> */
-    private static function object(DaggerObject $object, string $moduleName): array
+    private static function object(DaggerObject $object, ?string $mainObject): array
     {
         $name = NormalizesClassName::trimLeadingNamespace($object->name);
-        $lines = ['typeDef.withObject(' . self::quote($name) . self::option('description', $object->description) . ')'];
+        $isInterface = $object->isInterface();
+        $lines = ['typeDef.' . ($isInterface ? 'withInterface' : 'withObject') . '(' . self::quote($name)
+            . self::option('description', $object->description) . ')'];
 
         foreach ($object->daggerFields as $field) {
-            $lines[] = '  .withField(' . self::quote($field->name) . ', ' . self::type($field->type)
+            $lines[] = '  .withField(' . self::quote($field->name) . ', ' . self::type($field->type, refuseInterfaces: true)
                 . self::option('description', $field->description) . ')';
         }
 
@@ -85,7 +106,7 @@ final readonly class DangEntrypointRenderer
         // The engine finds an entrypoint's main object by its constructor, even
         // for an object with neither fields nor one of its own, and refuses more
         // than one constructor. Only the main object's is ever called.
-        if (self::isMainObject($name, $moduleName)) {
+        if (!$isInterface && $name === $mainObject) {
             $constructor = $object->daggerFunctions[''] ?? null;
             $function = $constructor !== null
                 ? self::function($constructor)
@@ -96,17 +117,10 @@ final readonly class DangEntrypointRenderer
         return $lines;
     }
 
-    private static function isMainObject(string $name, string $moduleName): bool
-    {
-        $normalize = static fn(string $value) => strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $value));
-
-        return $normalize($name) === $normalize($moduleName);
-    }
-
     /** @return list<string> */
-    private static function enum(DaggerEnum $enum): array
+    private static function enum(DaggerEnum $enum, ModuleNaming $naming): array
     {
-        self::refuseCollidingCases($enum);
+        self::refuseCollidingCases($enum, $naming);
 
         $name = NormalizesClassName::trimLeadingNamespace($enum->name);
         $lines = ['typeDef.withEnum(' . self::quote($name) . self::option('description', $enum->description) . ')'];
@@ -125,22 +139,24 @@ final readonly class DangEntrypointRenderer
      * an error, which would lose a PHP case from the module. Names are escaped
      * because two that collide can differ only in invisible bytes.
      */
-    private static function refuseCollidingCases(DaggerEnum $enum): void
+    private static function refuseCollidingCases(DaggerEnum $enum, ModuleNaming $naming): void
     {
         $visible = static fn(string $name) => addcslashes($name, "\x80..\xff");
+        $cases = array_map(static fn($case) => $case->name, $enum->cases);
+        $names = $naming->enumMemberNames($cases);
         $seen = [];
-        foreach ($enum->cases as $case) {
-            $name = EngineNaming::enumMemberName($case->name);
+        foreach ($cases as $i => $case) {
+            $name = $names[$i];
             if (isset($seen[$name])) {
                 throw new RuntimeException(sprintf(
                     'Enum %s cannot be registered: the engine gives its cases %s and %s the same name, %s. Rename one.',
                     $enum->name,
                     $visible($seen[$name]),
-                    $visible($case->name),
+                    $visible($case),
                     $visible($name),
                 ));
             }
-            $seen[$name] = $case->name;
+            $seen[$name] = $case;
         }
     }
 
@@ -153,8 +169,11 @@ final readonly class DangEntrypointRenderer
             $lines[] = '  .withDescription(' . self::quote($function->description) . ')';
         }
 
-        if ($function->withCheck) {
-            $lines[] = '  .withCheck';
+        // Each role's property is named after the Dang call that registers it.
+        foreach (['withCheck', 'withGenerator', 'withUp', 'withAgent'] as $role) {
+            if ($function->$role) {
+                $lines[] = "  .$role";
+            }
         }
 
         foreach ($function->arguments as $argument) {
@@ -185,12 +204,21 @@ final readonly class DangEntrypointRenderer
         return $line . ')';
     }
 
-    private static function type(ListOfType|Type $type): string
+    private static function type(ListOfType|Type $type, bool $refuseInterfaces = false): string
     {
         $base = $type->nullable ? 'typeDef.withOptional(true)' : 'typeDef';
 
         if ($type instanceof ListOfType) {
-            return "$base.withListOf(" . self::type($type->subtype) . ')';
+            return "$base.withListOf(" . self::type($type->subtype, $refuseInterfaces) . ')';
+        }
+
+        // The entrypoint declares no dependencies, so the engine would not know a client's types.
+        if (preg_match('#^\\\\?Dagger\\\\Clients\\\\([^\\\\]+)\\\\#', $type->name, $client) === 1) {
+            throw new RuntimeException(sprintf(
+                'The type %s comes from the module client %s, and a module function cannot take or return a client type yet',
+                $type->name,
+                $client[1],
+            ));
         }
 
         return match ($type->typeDefKind) {
@@ -207,10 +235,9 @@ final readonly class DangEntrypointRenderer
                     ? self::schemaName($type->name)
                     : NormalizesClassName::trimLeadingNamespace($type->name),
             ) . ')',
-            TypeDefKind::INTERFACE_KIND => throw new RuntimeException(sprintf(
-                'Currently cannot handle custom interfaces: %s',
-                $type->name,
-            )),
+            TypeDefKind::INTERFACE_KIND => !$refuseInterfaces && $type->isDaggerInterface()
+                ? "$base.withInterface(" . self::quote(NormalizesClassName::trimLeadingNamespace($type->name)) . ')'
+                : throw new RuntimeException(sprintf('Currently cannot handle custom interfaces: %s', $type->name)),
             default => throw new RuntimeException("No support exists for $type->name"),
         };
     }
@@ -245,15 +272,24 @@ final readonly class DangEntrypointRenderer
         ];
     }
 
+    /**
+     * The sources member selects the entrypoint contract whose types and call
+     * take no workspace. It returns the module directory only: the manifest's
+     * include lists the directories outside it, and the engine does not run
+     * sources for a manifest that declares include.
+     */
     private const MAIN = <<<'DANG'
 
     type Entrypoint implements ModuleEntrypoint {
-      pub types(workspace: Workspace!): [TypeDef!]! {
+      pub sources(workspace: Workspace!): Directory! {
+        directory.withDirectory(workspace.cwd, workspace.directory(".", exclude: ["**/.git", "vendor"], gitignore: true))
+      }
+
+      pub types: [TypeDef!]! {
         ModuleTypes().all
       }
 
       pub call(
-        workspace: Workspace!,
         receiverType: String!,
         receiverValue: JSON,
         fnName: String!,
@@ -274,14 +310,20 @@ final readonly class DangEntrypointRenderer
           .withEnvVariable("DAGGER_MODULE_CALL_DIGEST", callDigest ?? "")
           .withExec(["php", "sdk/bin/dagger-module", "call", "--output", "/dagger/result.json"], stdin: request, experimentalPrivilegedNesting: true)
           .file("/dagger/result.json")
-          .contents
+          .contents rescue {
+            # From v1.0.0-beta.27 an exec error's message carries only the exit code.
+            # Its extensions hold the stderr, capped by the engine at 100 KiB.
+            err: GraphQLError => {
+              let stderr = (JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? ""
+              if (stderr == "") { raise err }
+              raise stderr
+            }
+          }
         (result :: JSON!)
       }
 
-      # The module's own source, not the workspace the engine hands over: that is
-      # the caller's, which holds the module only when the module sits in it.
       let runtime: Container! {
-        PhpModuleBuild(source: currentModule.source).installed
+        PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed
       }
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Dagger\ValueObject;
 
+use Dagger\Attribute;
 use Dagger\Client\AbstractScalar;
 use Dagger\Client\IdAble;
 use Dagger\Exception\UnsupportedType;
@@ -46,6 +47,12 @@ final readonly class Type
         $class = new ReflectionClass($this->name);
 
         return $class->implementsInterface(IdAble::class);
+    }
+
+    public function isDaggerInterface(): bool
+    {
+        return interface_exists($this->name)
+            && (new ReflectionClass($this->name))->getAttributes(Attribute\DaggerObject::class) !== [];
     }
 
     private function getTypeDefKind(string $nameOfType): TypeDefKind

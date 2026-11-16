@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace Dagger\ValueObject;
 
+use Dagger\Agent;
 use Dagger\Attribute;
+use Dagger\Changeset;
 use Dagger\Container;
 use Dagger\Exception\RegistrationError\Invalid;
 use Dagger\Exception\RegistrationError\MissingAttribute;
 use Dagger\Exception\UnsupportedType;
+use Dagger\LLM;
+use Dagger\Service;
+use Dagger\Workspace;
 use ReflectionMethod;
 use ReflectionNamedType;
 use RuntimeException;
@@ -23,9 +28,21 @@ final readonly class DaggerFunction
         public array $arguments,
         public ListOfType|Type $returnType,
         public bool $withCheck = false,
+        public bool $withGenerator = false,
+        public bool $withUp = false,
+        public bool $withAgent = false,
     ) {
         if ($this->withCheck) {
-            $this->validateCheck();
+            $this->validateRole('a check', 'Checks', [Container::class, 'void'], 'Containers or void', mayBeNull: true);
+        }
+        if ($this->withGenerator) {
+            $this->validateRole('a generator', 'Generators', [Changeset::class], 'a non-null Changeset');
+        }
+        if ($this->withUp) {
+            $this->validateRole('up', 'Up functions', [Service::class], 'a non-null Service');
+        }
+        if ($this->withAgent) {
+            $this->validateAgent();
         }
     }
 
@@ -60,21 +77,18 @@ final readonly class DaggerFunction
             $method->getParameters(),
         );
 
-        return $method->isConstructor()
-            ? new self(
-                name: '',
-                description: null,
-                arguments: $parameters,
-                returnType: new Type($method->getDeclaringClass()->name),
-                withCheck: $method->getAttributes(Attribute\Check::class) !== [],
-            )
-            : new self(
-                name: $method->name,
-                description: $description,
-                arguments: $parameters,
-                returnType: self::getReturnType($method),
-                withCheck: $method->getAttributes(Attribute\Check::class) !== [],
-            );
+        $constructor = $method->isConstructor();
+
+        return new self(
+            name: $constructor ? '' : $method->name,
+            description: $constructor ? null : $description,
+            arguments: $parameters,
+            returnType: $constructor ? new Type($method->getDeclaringClass()->name) : self::getReturnType($method),
+            withCheck: $method->getAttributes(Attribute\Check::class) !== [],
+            withGenerator: $method->getAttributes(Attribute\Generate::class) !== [],
+            withUp: $method->getAttributes(Attribute\Up::class) !== [],
+            withAgent: $method->getAttributes(Attribute\Agent::class) !== [],
+        );
     }
 
     private static function getReturnType(
@@ -103,25 +117,62 @@ final readonly class DaggerFunction
         return Type::fromReflection($type);
     }
 
-    private function validateCheck(): void
-    {
+    /** @param list<string> $returns */
+    private function validateRole(
+        string $role,
+        string $plural,
+        array $returns,
+        string $expected,
+        bool $mayBeNull = false,
+    ): void {
         foreach ($this->arguments as $arg) {
-            if ($arg->isRequired()) {
-                throw Invalid::checkTakesNoArgs(
-                    $this->name,
-                    $arg->name,
-                );
+            if ($arg->isRequired() && !($arg->type instanceof Type && Workspace::class === $arg->type->name)) {
+                throw Invalid::requires($this->name, $role, $arg->name, "$plural may only require a Workspace");
             }
         }
 
-        if (
-            'void' !== $this->returnType->name
-            && Container::class !== $this->returnType->name
-        ) {
-            throw Invalid::checkReturnsContainerOrVoid(
+        $this->validateReturn($role, $plural, $returns, $expected, $mayBeNull);
+    }
+
+    /** @param list<string> $returns */
+    private function validateReturn(
+        string $role,
+        string $plural,
+        array $returns,
+        string $expected,
+        bool $mayBeNull = false,
+    ): void {
+        $returnType = $this->returnType instanceof Type ? $this->returnType->name : 'array';
+        if (!in_array($returnType, $returns, true) || ($this->returnType->nullable && !$mayBeNull)) {
+            throw Invalid::returns($this->name, $role, $returnType, "$plural must return $expected");
+        }
+    }
+
+    private function validateAgent(): void
+    {
+        $this->validateReturn('an agent', 'Agents', [LLM::class], 'a non-null LLM');
+
+        $llms = 0;
+        $bases = 0;
+        foreach ($this->arguments as $arg) {
+            $type = $arg->type instanceof Type ? $arg->type->name : 'array';
+            $llms += LLM::class === $type ? 1 : 0;
+            if (!$arg->isRequired() || Workspace::class === $type || Agent::class === $type) {
+                continue;
+            }
+            if (LLM::class === $type && ++$bases === 1) {
+                continue;
+            }
+            throw Invalid::requires(
                 $this->name,
-                $this->returnType->name,
+                'an agent',
+                $arg->name,
+                'Agents may only require their base LLM, a Workspace or an Agent',
             );
+        }
+
+        if ($bases !== 1 || $llms !== 1) {
+            throw Invalid::agentTakesOneBase($this->name);
         }
     }
 }

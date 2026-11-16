@@ -1,0 +1,9 @@
+parameters:
+    level: 5
+    tmpDir: .cache/phpstan
+    paths:
+        - src
+        # The rest of tests/ is vendored from dagger/dagger.
+        - tests/Unit/Module
+includes:
+    - phpstan-baseline.neon

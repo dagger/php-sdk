@@ -6,6 +6,8 @@ namespace Dagger\Module;
 
 use Dagger\Attribute;
 use Dagger\Client;
+use Dagger\Client\IdAble;
+use Dagger\Id;
 use Dagger\Json;
 use Dagger\Service\Serialisation;
 use Dagger\TypeDefKind;
@@ -18,13 +20,13 @@ use ReflectionProperty;
 use stdClass;
 
 /**
- * Decodes values that json_decode has already made structural, unlike
- * DecodesValue, which splits the JSON text of a list on its commas.
+ * Decodes values that json_decode has already made structural.
  */
 final readonly class ValueCodec
 {
     public function __construct(
         private Serialisation\Serialiser $serialiser,
+        private Client $client,
     ) {
     }
 
@@ -41,7 +43,7 @@ final readonly class ValueCodec
                 new Serialisation\IdableHandler($client),
                 new Serialisation\EnumHandler(),
             ],
-        ));
+        ), $client);
     }
 
     public function decode(mixed $value, ListOfType|Type $type): mixed
@@ -78,9 +80,11 @@ final readonly class ValueCodec
             TypeDefKind::OBJECT_KIND => $type->isIdable()
                 ? $this->serialiser->deserialise(json_encode($value, JSON_THROW_ON_ERROR), $type->name)
                 : $this->decodeObject($value, $type->name),
-            TypeDefKind::INTERFACE_KIND => throw new InvalidArgumentException(
-                sprintf('Currently cannot decode custom interfaces: %s', $type->name),
-            ),
+            TypeDefKind::INTERFACE_KIND => $type->isDaggerInterface()
+                ? $this->decodeInterface($value, $type)
+                : throw new InvalidArgumentException(
+                    sprintf('Currently cannot decode custom interfaces: %s', $type->name),
+                ),
             default => throw new InvalidArgumentException("Cannot decode $type->name"),
         };
 
@@ -94,7 +98,7 @@ final readonly class ValueCodec
 
     public function encode(mixed $value, ListOfType|Type|null $type = null): string
     {
-        return $this->serialiser->serialise(self::withLists($value, $type));
+        return $this->serialiser->serialise(self::encodable($value, $type));
     }
 
     private function decodeScalar(mixed $value, Type $type): mixed
@@ -110,6 +114,20 @@ final readonly class ValueCodec
             ),
             $type->name,
         );
+    }
+
+    private function decodeInterface(mixed $id, Type $type): object
+    {
+        if (!is_string($id)) {
+            throw self::unexpected($id, $type);
+        }
+
+        $class = InterfaceClients::className($type->name);
+        if (!class_exists($class)) {
+            throw new InvalidArgumentException("No class $class exists; run dagger generate");
+        }
+
+        return $this->client->loadObjectFromId($class, new Id($id), constant("$class::GRAPHQL_TYPE"));
     }
 
     /**
@@ -172,17 +190,33 @@ final readonly class ValueCodec
     }
 
     /**
-     * A list that array_filter or a keyed build has left with gaps would
-     * otherwise reach the engine as a JSON object.
+     * The value as the engine can read it once serialised. A list that
+     * array_filter or a keyed build has left with gaps would otherwise reach
+     * the engine as a JSON object. The engine reads an interface value only as
+     * the ID of an implementation it holds (dagger/dagger core/interface.go,
+     * ConvertFromSDKResult), so a plain PHP implementation is refused.
      */
-    private static function withLists(mixed $value, ListOfType|Type|null $type): mixed
+    private static function encodable(mixed $value, ListOfType|Type|null $type): mixed
     {
+        if (
+            $type instanceof Type
+            && $type->typeDefKind === TypeDefKind::INTERFACE_KIND
+            && $value !== null
+            && !$value instanceof IdAble
+        ) {
+            throw new InvalidArgumentException(sprintf(
+                '%s cannot be returned as the interface %s: return an implementation received as that interface',
+                get_debug_type($value),
+                $type->name,
+            ));
+        }
+
         if (!$type instanceof ListOfType || !is_array($value)) {
             return $value;
         }
 
         return array_map(
-            static fn($element) => self::withLists($element, $type->subtype),
+            static fn($element) => self::encodable($element, $type->subtype),
             array_values($value),
         );
     }

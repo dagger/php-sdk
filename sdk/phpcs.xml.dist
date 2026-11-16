@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ruleset name="PSR">
+    <file>src</file>
+    <!-- The rest of tests/ is vendored from dagger/dagger. -->
+    <file>tests/Unit/Module</file>
+
+    <exclude-pattern>*/generated/*</exclude-pattern>
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+
+    <rule ref="PSR1"/>
+    <rule ref="PSR12"/>
+
+    <!-- Lines of rendered Dang stay whole, so the template reads like its output. -->
+    <rule ref="Generic.Files.LineLength">
+        <exclude-pattern>src/Module/DangEntrypointRenderer\.php</exclude-pattern>
+        <exclude-pattern>tests/Unit/Module/DangEntrypointRendererTest\.php</exclude-pattern>
+    </rule>
+</ruleset>

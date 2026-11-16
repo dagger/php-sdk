@@ -1,0 +1,7 @@
+{
+    "name": "acme/program",
+    "require": {
+        "php": "^8.2"
+    },
+    "extra": {"keep": true}
+}

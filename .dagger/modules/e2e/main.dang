@@ -11,9 +11,14 @@ type E2e {
   let rootingModulePath: String! = fixtureRoot + "/rooting/app"
   let entrypointModulePath: String! = fixtureRoot + "/entrypoint/app"
   let entrypointName: String! = "entrypoint-app"
-  let target: String! = "v1.0.0-beta.25"
+  let outsideModulePath: String! = fixtureRoot + "/outside/app"
+  let clientTargetPath: String! = fixtureRoot + "/client-target/app"
+  let clientMakerPath: String! = fixtureRoot + "/client-target/maker"
+  let clientCallerPath: String! = fixtureRoot + "/client-target/caller"
+  let programPath: String! = fixtureRoot + "/client-target/program"
+  let interfacesPath: String! = fixtureRoot + "/interfaces"
+  let target: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
-  let unitTestFilter: String! = "EntrypointMetadataTest|DangEntrypointRendererTest|EngineNamingTest|CallDispatcherTest|ValueCodecTest"
 
   let assert(condition: Boolean!, message: String!): Void {
     if (condition == false) { raise message }
@@ -47,8 +52,16 @@ type E2e {
   """
   The fixture module generated from a workspace, at the workspace root.
   """
-  let generatedEntrypoint(ws: Workspace!, sdk: PhpSdk! = phpSdk): Workspace! {
-    sdk.generateScope(ws.withWorkdir(entrypointModulePath), isModule: true, name: entrypointName, clients: []).withWorkdir(".")
+  let generatedEntrypoint(ws: Workspace!, sdk: PhpSDK! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): Workspace! {
+    sdk.generateScope(ws.withWorkdir(path), isModule: true, name: name, clients: clients).withWorkdir(".")
+  }
+
+  """
+  The fixture program, a scope without a module, generated from a workspace, at
+  the workspace root.
+  """
+  let generatedProgram(ws: Workspace!, clients: [ModuleSource!]!): Workspace! {
+    phpSdk.generateScope(ws.withWorkdir(programPath), isModule: false, name: "", clients: clients).withWorkdir(".")
   }
 
   let usesEntrypoint(ws: Workspace!): Boolean! {
@@ -56,10 +69,34 @@ type E2e {
   }
 
   """
+  The message a direct generation of the module at path fails with, or the
+  workspace cwd when it does not fail.
+  """
+  let directError(ws: Workspace!, path: String! = entrypointModulePath): String! {
+    phpSdk.mod(ws, path: path, findUp: false).generated.cwd rescue {
+      err: Error => err.message
+    }
+  }
+
+  """
+  Assert that a direct generation refuses the module at path as a module on the
+  PHP runtime that cannot move to the entrypoint, for reason.
+  """
+  let assertMoveRefused(ws: Workspace!, what: String!, reason: String!, path: String! = entrypointModulePath): Void {
+    let message = directError(ws, path)
+    assertContains(message, "cannot move to the generated entrypoint", what + " should be refused")
+    assertContains(message, reason, what + " was refused for the wrong reason")
+  }
+
+  let installsFromComposerFiles(ws: Workspace!): Boolean! {
+    contentsOf(generatedEntrypoint(ws), entrypointModulePath + "/sdk/entrypoint/build.dang").contains("\"--no-autoloader\"")
+  }
+
+  """
   The message generation fails with, or an empty string when it does not fail.
   """
-  let generationError(ws: Workspace!, sdk: PhpSdk! = phpSdk): String! {
-    let cwd = generatedEntrypoint(ws, sdk).cwd rescue {
+  let generationError(ws: Workspace!, sdk: PhpSDK! = phpSdk, clients: [ModuleSource!]! = [], path: String! = entrypointModulePath, name: String! = entrypointName): String! {
+    let cwd = generatedEntrypoint(ws, sdk, clients, path, name).cwd rescue {
       err: Error => "failed: " + err.message
     }
     if (cwd.hasPrefix("failed: ")) { cwd.trimPrefix("failed: ") } else { "" }
@@ -71,8 +108,15 @@ type E2e {
     assertContains(message, want, what + " was refused for the wrong reason")
   }
 
+  """
+  The fixture's manifest on the PHP runtime, and tables to append to it.
+  """
+  let runtimeManifest: String! = "name = \"entrypoint-app\"\nengineVersion = \"v1.0.0-beta.21\"\n\n[runtime]\nsource = \"php\"\n"
+  let dependencyTable: String! = "\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n"
+  let entrypointTable: String! = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
+
   let assertNoChange(ws: Workspace!, what: String!): Void {
-    assert(generatedEntrypoint(ws).changes(ws).isEmpty, what + " changed on a second generation")
+    assert(generatedEntrypoint(ws).changes(ws).isEmpty, what + " changed on generation")
   }
 
   let withConfig(ws: Workspace!, contents: String!): Workspace! {
@@ -95,17 +139,20 @@ type E2e {
   }
 
   """
-  The client root is the nearest composer.json, except that a module's vendored
-  SDK resolves to the module that owns it.
+  The client root is the nearest composer.json, except that the vendored SDK of
+  a module or a PHP program resolves to the module or program that owns it.
   """
   pub findClientRootCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
     let fromModule = phpSdk.findClientRoot(root.asWorkspace(cwd: clientRootModulePath))
     let fromSdk = phpSdk.findClientRoot(root.asWorkspace(cwd: clientRootModulePath + "/sdk"))
     let outside = phpSdk.findClientRoot(root.asWorkspace(cwd: fixtureRoot))
+    let program = root.withNewFile(programPath + "/sdk/composer.json", "{\"name\": \"dagger/dagger\"}\n")
+    let fromProgramSdk = phpSdk.findClientRoot(program.asWorkspace(cwd: programPath + "/sdk"))
 
     assert(fromModule == clientRootModulePath, "a module should be its own client root")
     assert(fromSdk == clientRootModulePath, "a vendored SDK should resolve to the module that owns it")
+    assert(fromProgramSdk == programPath, "a PHP program's vendored SDK should resolve to the program that owns it")
     assert(outside == null, "a directory outside any PHP project should have no client root")
     null
   }
@@ -144,13 +191,22 @@ type E2e {
     assertNotContains(manifest, "[runtime]", "a new module should not keep the php runtime")
     assertContains(
       generated.file("sdk/entrypoint/dang.toml").contents,
-      "dagger = \"v1.0.0-beta.25\"",
-      "the entrypoint should declare v1.0.0-beta.25, before the identifier-casing cut",
+      "dagger = \"v1.0.0-beta.27\"",
+      "the entrypoint should declare v1.0.0-beta.27, past the identifier-casing cut",
     )
-    let portedNaming = generated.file("sdk/src/Module/EngineNaming.php").contents
-    assertContains(portedNaming, "Copyright (c) 2018 Ma_124", "the generated SDK should keep the strcase copyright")
-    assertContains(portedNaming, "Permission is hereby granted", "the generated SDK should keep the strcase permission notice")
     assertContains(generated.file("sdk/LICENSE").contents, "Apache License", "the generated SDK should keep its own license")
+    let moduleClass = generated.file("src/Layering.php").contents
+    assertContains(moduleClass, "core()", "the default template should call the core API through core()")
+    assertNotContains(moduleClass, "dag()", "the default template should not use the global client")
+    assert(generated.directory("sdk/src").exists("dag.php") == false, "a new module should not get the global client")
+    let earlierSdk = ws
+      .withNewFile("/" + layeringModulePath + "/sdk/composer.json", "{\"name\": \"dagger/dagger\"}\n")
+      .withNewFile("/" + layeringModulePath + "/sdk/src/functions.php", "<?php\n\nnamespace Dagger;\n\nfunction dag(): Client\n{\n    return Dagger::getClientInstance();\n}\n")
+    let upgraded = phpSdk.generateScope(earlierSdk.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
+    assert(upgraded.directory("sdk/src").exists("dag.php"), "a new module whose sdk/ from an earlier release has dag() should keep it")
+    assert(phpSdk.templates.{{name}}.map { t => t.name }.join(",") == "default,empty", "the templates should be default and empty")
+    let empty = phpSdk(template: "empty").generateScope(root.asWorkspace(cwd: layeringModulePath), isModule: true, name: "layering", clients: [])
+    assertNotContains(empty.file("src/Layering.php").contents, "DaggerFunction", "the empty template should have no function")
     null
   }
 
@@ -158,8 +214,9 @@ type E2e {
   generateScope on an existing module changes files under the scope only, not
   one module path deeper, and the scope stays the cwd.
 
-  This needs a module whose codegen actually emits files, so it runs the PHP
-  runtime.
+  The module has a manifest only, so generation seeds the template, as the PHP
+  runtime would, and moves the module to the entrypoint. The same module with a
+  source directory is refused, and the refusal names the README's migration.
   """
   pub generateExistingModuleCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
@@ -182,14 +239,33 @@ type E2e {
       paths.filter { path => path.hasPrefix(rootingModulePath + "/" + fixtureRoot) }.length == 0,
       "generated files landed one module path deeper than the scope",
     )
+    assert(contains(changes.addedPaths, rootingModulePath + "/composer.json"), "a module without a composer.json should be seeded")
+    assert(contains(changes.addedPaths, rootingModulePath + "/src/RootingApp.php"), "the seeded template should name the module's class")
+    assertContains(generated.file("dagger-module.toml").contents, "source = \"./sdk/entrypoint\"", "a seeded module should move to the entrypoint")
+
+    let manifest = rootingModulePath + "/dagger-module.toml"
+    let withSource = ws.withNewFile("/" + manifest, "source = \"./php\"\n" + contentsOf(ws, manifest))
+    let refusal = generationError(withSource, path: rootingModulePath, name: "rooting-app")
+    assertContains(refusal, "is on the PHP runtime, which this SDK no longer generates, and cannot move to the generated entrypoint: its source is php", "a module with a source directory should be refused")
+    assertContains(refusal, "See \"Migrate from the built-in PHP runtime\" in the php-sdk README", "the refusal should name the migration")
     null
   }
 
   """
-  A scope without a module and without clients is left unchanged.
+  A scope without a module and without clients is left unchanged. A module's
+  clients generate into sdk/generated/Clients, a second generation changes
+  nothing, and a removed client's files go. A refused generation returns no
+  workspace, so it changes nothing. A direct generation, which does not know the
+  clients, refuses a module that has some. The client type in a function
+  signature is refused by the entrypoint describer, which the unit tests cover.
+  A program, a scope without a module, gets its clients the same way and the
+  Composer wiring, keeps them after a second generation, and keeps its core
+  once its last client is removed.
   """
   pub generateClientScopeCheck(ws: Workspace!): Void @check {
     let root = ws.directory("/")
+    # A workspace opened from Git, as on CI, would make these fixtures Git clients.
+    let local = root.asWorkspace
     let generated = phpSdk.generateScope(
       root.asWorkspace(cwd: layeringModulePath),
       isModule: false,
@@ -199,7 +275,125 @@ type E2e {
 
     assert(cwdOf(generated) == layeringModulePath, "generateScope changed the workspace cwd")
     assert(generated.directory("/").changes(root).isEmpty, "a scope without a module or clients should not change")
+
+    let lister = local.moduleSource("/" + clientTargetPath)
+    let maker = local.moduleSource("/" + clientMakerPath)
+    let clientsDir = entrypointModulePath + "/sdk/generated/Clients"
+    let both = generatedEntrypoint(local, clients: [lister, maker])
+    let entry = contentsOf(both, clientsDir + "/FileLister/Client.php")
+    assertContains(entry, "namespace Dagger\\Clients\\FileLister;", "a client should generate into its namespace")
+    assertContains(entry, "function fileLister(", "the entry class should have the target's constructor")
+    assertNotContains(entry, "dag(", "a client should not use the global client")
+    assertContains(entry, "serve('/" + clientTargetPath + "', null)", "a local client should serve its module from the workspace root, without a pin")
+    assert(exists(both, clientsDir + "/FileLister/FileLister.php"), "the client's type should be generated")
+    assert(exists(both, clientsDir + "/FileMaker/Client.php"), "every client should be generated")
+    assert(exists(both, entrypointModulePath + "/sdk/generated/Client.php"), "core should still be generated")
+    assert(exists(both, entrypointModulePath + "/sdk/generated/FileLister.php") == false, "core should not hold a client's types")
+    assert(generatedEntrypoint(both, clients: [lister, maker]).changes(both).isEmpty, "a second generation with clients changed the module")
+    let fewer = generatedEntrypoint(both, clients: [lister])
+    assert(exists(fewer, clientsDir + "/FileMaker") == false, "a removed client's files should go")
+    assert(exists(fewer, clientsDir + "/FileLister/Client.php"), "the remaining client should stay")
+    assert(exists(generatedEntrypoint(both), clientsDir) == false, "removing every client should remove generated/Clients")
+    let direct = phpSdk.mod(both, path: entrypointModulePath, findUp: false).generated.cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(direct, "has module clients, which only its scope in dagger.toml lists: run dagger generate", "a direct generation should not drop the clients")
+
+    let plain = phpSdk.generateScope(root.asWorkspace(cwd: layeringModulePath), isModule: false, name: "layering", clients: [lister]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(plain, "has no composer.json, which autoloads its clients: create one with composer init, or remove the clients file-lister", "a client in a scope without a module or composer.json should be refused")
+
+    let programSdk = programPath + "/sdk/generated"
+    let program = generatedProgram(local, [lister])
+    assert(exists(program, programSdk + "/Clients/FileLister/Client.php"), "a program's client should be generated")
+    assert(exists(program, programSdk + "/Client.php"), "a program's core should be generated")
+    let composer = contentsOf(program, programPath + "/composer.json")
+    assertContains(composer, "\"url\": \"./sdk\"", "a program should get the path repository ./sdk")
+    assertContains(composer, "\"dagger/dagger\": \"*@dev\"", "a program should require dagger/dagger")
+    assertContains(composer, "\"extra\": {\"keep\": true}", "a program's other keys should be kept, with their formatting")
+    let lock = contentsOf(program, programPath + "/composer.lock")
+    assert(lock.containsMatch("\"name\": \"dagger/dagger\",[^}]*\"dist\": \\{\\s*\"type\": \"path\",\\s*\"url\": \"\\./sdk\""), "a program's composer.lock should install dagger/dagger from ./sdk")
+    phpSdk.mod(local, path: entrypointModulePath, findUp: false).phpContainer
+      .withDirectory("/program", program.directory("/" + programPath, include: ["composer.json", "composer.lock"]))
+      .withWorkdir("/program")
+      .withExec(["composer", "validate", "--no-check-publish"])
+      .sync
+    assert(generatedProgram(program, [lister]).changes(program).isEmpty, "a second generation of a program changed it")
+    let emptied = generatedProgram(program, [])
+    assert(exists(emptied, programSdk + "/Clients") == false, "removing a program's last client should remove generated/Clients")
+    assert(exists(emptied, programSdk + "/Client.php"), "removing a program's last client should keep its core")
+    assertContains(contentsOf(emptied, programPath + "/composer.json"), "\"dagger/dagger\": \"*@dev\"", "removing a program's last client should keep its Composer wiring")
+    let namedRepository = local.withNewFile("/" + programPath + "/composer.json", "{\"repositories\": {\"dagger-sdk\": {\"type\": \"vcs\", \"url\": \"https://example.com/x.git\"}}}\n")
+    let taken = generatedProgram(namedRepository, [lister]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(taken, "names a Composer repository dagger-sdk, which composer config would replace with ./sdk", "a program's own repository named dagger-sdk should be refused")
+
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let runtime = generationError(local.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + contentsOf(local, manifest)), clients: [lister])
+    assertContains(runtime, "cannot move to the generated entrypoint: it sets disableDefaultFunctionCaching", "a module on the PHP runtime that cannot move should be refused, with or without clients")
+    let onTarget = local.withNewFile("/" + manifest, contentsOf(local, manifest).replace("v1.0.0-beta.21", target))
+    let itself = generationError(onTarget, clients: [lister, onTarget.moduleSource("/" + entrypointModulePath)])
+    assertContains(itself, "declares itself as the client entrypoint-app", "a client of the scope's own module should be refused")
+    let renamed = local
+      .withNewFile("/" + clientTargetPath + "/dagger-module.toml", "name = \"FileLister\"\nengineVersion = \"v1.0.0-beta.27\"\n\n[runtime]\n  source = \"dang\"\n")
+      .moduleSource("/" + clientTargetPath)
+    assertContains(generationError(local, clients: [lister, renamed]), "has the clients file-lister and FileLister, which generate into one PHP namespace", "clients whose namespaces differ only in case should be refused")
+    let acrossCut = local
+      .withNewFile("/" + clientMakerPath + "/dagger-module.toml", "name = \"file-maker\"\nengineVersion = \"v1.0.0-beta.25\"\n\n[runtime]\n  source = \"dang\"\n")
+      .moduleSource("/" + clientMakerPath)
+    assertContains(generationError(local, clients: [acrossCut]), "has the client file-maker, which declares v1.0.0-beta.25, before the identifier-casing cut at v1.0.0-beta.26", "a client module before the identifier-casing cut should be refused")
+    let programCut = generatedProgram(local, [acrossCut]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(programCut, "has the client file-maker, which declares v1.0.0-beta.25", "a program's client module before the identifier-casing cut should be refused")
+    let programComposer = "/" + programPath + "/composer.json"
+    let missing = generatedProgram(local.withNewFile(programComposer, "{\"repositories\": [{\"type\": \"path\", \"url\": \"../missing\"}]}\n"), [lister]).cwd rescue {
+      err: Error => err.message
+    }
+    assertContains(missing, "reads ../missing outside it, which holds no file in the workspace", "a program's missing Composer path outside it should be refused")
+    let bootstrap = local
+      .withNewFile("/" + fixtureRoot + "/client-target/bootstrap.php", "<?php\n")
+      .withNewFile(programComposer, "{\"autoload\": {\"files\": [\"../bootstrap.php\"]}}\n")
+    assertContains(contentsOf(generatedProgram(bootstrap, [lister]), programPath + "/composer.json"), "../bootstrap.php", "a program with an autoload file outside it should generate")
     null
+  }
+
+  """
+  A module calls its two dependencies as clients through dagger call, from its
+  own code: a core Directory that one client returns reaches the other. A program installed with
+  Composer does the same in a nested session, whose local addresses resolve in
+  this module's tree.
+  """
+  pub unifiedClientCallCheck(ws: Workspace!): Void @check {
+    let tree = directory
+      .withDirectory("caller", ws.directory("/" + clientCallerPath))
+      .withDirectory("lister", ws.directory("/" + clientTargetPath))
+      .withDirectory("maker", ws.directory("/" + clientMakerPath))
+    let scope = tree.asWorkspace(cwd: "caller")
+    let lister = scope.moduleSource("/lister")
+    let generated = phpSdk.generateScope(scope, isModule: true, name: "caller", clients: [lister, scope.moduleSource("/maker")])
+    assertNotContains(generated.file("/caller/dagger-module.toml").contents, "[[dependencies]]", "the caller's dependencies should become clients")
+    let app = callClient
+      .withDirectory("/work", generated.directory("/"))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/caller")
+    let listed = call(app, ["call", "list-made"])
+    assert(listed.trimSpace == "a.html,b.html", "the module should list what one client made with the other: " + listed)
+
+    # A workspace opened from Git, as on CI, would make these fixtures Git clients.
+    let local = ws.directory("/").asWorkspace
+    let program = generatedProgram(local, [local.moduleSource("/" + clientTargetPath), local.moduleSource("/" + clientMakerPath)])
+    let printed = phpSdk.mod(ws, path: entrypointModulePath, findUp: false).phpContainer
+      .withDirectory("/program", program.directory("/" + programPath))
+      .withWorkdir("/program")
+      .withExec(["composer", "install", "--no-dev"])
+      .withEnvVariable("DAGGER_CLIENT_VERSION", target)
+      .withExec(["php", "main.php"], experimentalPrivilegedNesting: true)
+      .stdout
+    assert(printed.trimSpace == "a.html,b.html", "the program should list what one client made with the other: " + printed)
   }
 
   """
@@ -284,7 +478,8 @@ type E2e {
 
   """
   What counts as this SDK's: the entrypoint path alone does not, so another SDK's
-  entrypoint, a custom one and a stray dang.toml stay out of generation.
+  entrypoint, a custom one, a runtime other than php and a stray dang.toml stay
+  out of generation, which changes nothing for the first three.
   """
   pub entrypointOwnershipCheck(ws: Workspace!): Void @check {
     let generated = generatedEntrypoint(ws)
@@ -296,14 +491,15 @@ type E2e {
 
     let foreign = generated.withNewFile("/" + build, "type PythonModuleBuild {}\n")
     assert(phpSdk.mod(foreign, path: entrypointModulePath, findUp: false).ownsEntrypoint == false, "another SDK's entrypoint at the same path should not be recognized")
-    assert(usesEntrypoint(foreign) == false, "another SDK's entrypoint should stay out of generation")
+    assertNoChange(foreign, "another SDK's entrypoint")
     let lookup = phpSdk.mod(foreign, path: entrypointModulePath + "/src").rootPath rescue {
       err: Error => err.message
     }
     assertContains(lookup, "does not use the PHP SDK", "find-up should not take another SDK's entrypoint for PHP")
 
     let custom = generated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[entrypoint]\nkind = \"dang\"\nsource = \"./custom\"\n")
-    assert(usesEntrypoint(custom) == false, "a custom entrypoint should stay out of generation")
+    assertNoChange(custom, "a custom entrypoint")
+    assertNoChange(generated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\nengineVersion = \"" + target + "\"\n\n[runtime]\nsource = \"go\"\n"), "a module on a runtime other than php")
 
     assertRefused(
       ws.withNewFile("/" + entrypointConfigPath, "dang = \"2.1\"\n"),
@@ -320,7 +516,7 @@ type E2e {
 
   """
   An eligible module moves to the entrypoint and keeps its settings. A module the
-  entrypoint cannot run keeps the runtime, and neither is dropped silently.
+  entrypoint cannot run is refused, and no setting is dropped silently.
   """
   pub entrypointMigrationCheck(ws: Workspace!): Void @check {
     let manifest = entrypointModulePath + "/dagger-module.toml"
@@ -332,12 +528,20 @@ type E2e {
     let written = contentsOf(migrated, manifest)
     assertContains(written, "source = \"./sdk/entrypoint\"", "the manifest should name the entrypoint")
     assertNotContains(written, "engineVersion", "only a runtime reads engineVersion")
+    assertNotContains(written, "include", "a module without patterns or paths outside it should not declare include")
     assertNotContains(written, "[runtime]", "the php runtime should be replaced")
     assert(contentsOf(migrated, composer) == composerText, "Composer settings should not change")
     assert(exists(migrated, entrypointModulePath + "/composer.lock"), "the lock should be written")
     assert(exists(migrated, entrypointModulePath + "/sdk/generated/Client.php"), "the client should be generated")
     assert(exists(migrated, entrypointModulePath + "/sdk/bin/dagger-module"), "the call command should be written")
     assert(exists(migrated, entrypointModulePath + "/sdk/tests") == false, "the SDK's tests are not for modules")
+    let dagPath = entrypointModulePath + "/sdk/src/dag.php"
+    assert(exists(migrated, dagPath), "a module from the PHP runtime should keep the global client")
+    assert(exists(generatedEntrypoint(migrated), dagPath), "a migrated module should keep the global client at its next generation")
+    assert(exists(generatedEntrypoint(ws, phpSdk(globalClient: false)), dagPath) == false, "globalClient = false should leave the global client out")
+    assert(exists(generatedEntrypoint(ws.withoutFile("/" + manifest), phpSdk(globalClient: true)), dagPath), "globalClient = true should give a new module the global client")
+    let recordedOff = recordedScope(ws, "/" + entrypointModulePath, "globalClient = false")
+    assert(exists(recordedOff.withChanges(phpSdk.mod(recordedOff, path: entrypointModulePath, findUp: false).generate), dagPath) == false, "a direct mod should read globalClient = false from dagger.toml")
 
     let fromJson = ws
       .withoutFile("/" + manifest)
@@ -394,46 +598,202 @@ type E2e {
     let fromModule = phpSdk.mod(ws.withWorkdir(entrypointModulePath), path: ".").generate
     assert(contains(fromModule.addedPaths, "sdk/entrypoint/main.dang"), "generating from the module should write the entrypoint relative to it")
 
-    let kept = "name = \"entrypoint-app\"\nengineVersion = \"v1.0.0-beta.21\"\n\n[runtime]\nsource = \"php\"\n"
-    let dependency = kept + "\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n"
+    let kept = runtimeManifest
+    let dependency = kept + dependencyTable
     assert(usesEntrypoint(ws), "the fixture should be eligible")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, dependency)) == false, "a module with dependencies keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "include = [\"src\"]\n" + kept)) == false, "a module with include rules keeps the runtime")
-    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept)) == false, "a module with another source keeps the runtime")
-    assert(usesEntrypoint(ws.withoutFile("/" + composer)) == false, "a module without a composer.json keeps the runtime")
+    assertContains(directError(ws.withNewFile("/" + manifest, dependency)), "a direct generation does not know the clients of its scope", "a direct generation of a module with dependencies should be refused")
+    let several = "source = \"./php\"\ndisableDefaultFunctionCaching = true\n" + dependency.replace("v1.0.0-beta.21", "v1.1.0")
+    assertMoveRefused(
+      ws.withNewFile("/" + manifest, several),
+      "a module with several reasons",
+      "it has dependencies, and a direct generation does not know the clients of its scope, which provide them: run dagger generate; its engineVersion is later than v1.0.0-beta.27; it sets disableDefaultFunctionCaching; its source is php. See",
+    )
+    let filtered = "include = [\"src\", \"composer.json\", \"!src/tmp\"]\nexclude = [\"notes\"]\n" + kept
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, filtered)), "a module with include and exclude patterns should be eligible")
+    let translated = generatedEntrypoint(ws.withNewFile("/" + manifest, filtered))
+    assertContains(contentsOf(translated, manifest), "\"!src/tmp\"", "the migrated manifest should keep the include patterns")
+    assertContains(contentsOf(translated, manifest), "\"!notes\"", "an exclude entry should be kept as a negated include pattern")
+    assertNoChange(translated, "a module with include patterns")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!src/tmp\", \"src/tmp/keep\"]\n" + kept), "a pattern after an exclusion", "its include pattern src/tmp/keep includes again after an exclusion")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!../lib\"]\n" + kept), "an exclusion outside the module", "its include pattern !../lib excludes outside the module")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"../lib/*.php\"]\n" + kept), "an outside glob", "its include pattern ../lib/*.php outside the module is a glob")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "exclude = [\"sdk\"]\n" + kept), "an exclusion of the generated sdk/", "its exclusion sdk drops files the generated entrypoint needs")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!composer.*\"]\n" + kept), "an exclusion of composer.json", "its exclusion composer.* drops files the generated entrypoint needs")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!!notes\"]\n" + kept), "an exclusion of a name that starts with !", "its include pattern !!notes excludes a name that starts with !")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!./!notes\"]\n" + kept), "an exclusion that normalizes to a name that starts with !", "its include pattern !./!notes excludes a name that starts with !")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "exclude = [\"sdk/entrypoint/types.dang\"]\n" + kept), "an exclusion of a generated entrypoint file", "its exclusion sdk/entrypoint/types.dang drops files")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "exclude = [\"sdk/src\"]\n" + kept), "an exclusion of the SDK library", "its exclusion sdk/src drops files")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "include = [\"!notes\", \"..\"]\n" + kept), "an ancestor of the module after an exclusion", "its include pattern .. includes again after an exclusion")
+    let hidden = ws.withNewFile(
+      "/" + entrypointModulePath + "/src/Hidden.php",
+      "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nclass Hidden\n{\n    #[\\Dagger\\Attribute\\DaggerFunction]\n    public function hidden(): string\n    {\n        return 'hidden';\n    }\n}\n",
+    )
+    let typesPath = entrypointModulePath + "/sdk/entrypoint/types.dang"
+    let withAncestor = generatedEntrypoint(hidden.withNewFile("/" + manifest, "include = [\"..\"]\n" + kept))
+    assertContains(contentsOf(withAncestor, typesPath), "\"Hidden\"", "the fixture class should be described without an exclusion")
+    let ancestorExcluding = generatedEntrypoint(hidden.withNewFile("/" + manifest, "include = [\"..\", \"!src/Hidden.php\"]\n" + kept))
+    assertNotContains(contentsOf(ancestorExcluding, typesPath), "\"Hidden\"", "an ancestor include should not bring back a file the module excludes")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "source = \"./php\"\n" + kept), "a module with another source", "its source is php")
+    assert(usesEntrypoint(ws.withoutFile("/" + composer)), "a module without a composer.json should be eligible")
+    let moduleClass = entrypointModulePath + "/src/EntrypointApp.php"
+    let seeded = generatedEntrypoint(ws.withoutFile("/" + composer))
+    let seededOutside = generatedEntrypoint(ws.withoutFile("/" + composer).withNewFile("/" + manifest, "include = [\"../../outside/extra\"]\n" + kept))
+    assertContains(contentsOf(seededOutside, manifest), "\"../../outside/extra\"", "a seeded module should keep its include directory outside it")
+    assert(contentsOf(seeded, moduleClass) == contentsOf(ws, moduleClass), "the seeded template should keep the module's files")
+    assertContains(generationError(ws.withoutFile("/" + composer), phpSdk(template: "missing")), "unknown init template: missing", "a module seeded from an unknown template")
+    let initialized = generatedEntrypoint(ws.withoutFile("/" + manifest))
+    assert(contentsOf(initialized, composer) == composerText, "a new module should keep its composer.json")
+    assert(exists(initialized, dagPath) == false, "a new module with a composer.json should not get the global client")
+    assertMoveRefused(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", "v1.1.0")), "a module on an engine later than the target", "its engineVersion is later than v1.0.0-beta.27")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", target))), "a module on the target engine should be eligible")
+    assertMoveRefused(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + kept), "a module without default function caching", "it sets disableDefaultFunctionCaching")
+    assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = false\n" + kept)), "a module with default function caching should be eligible")
+    assertMoveRefused(ws.withNewFile("/" + manifest, kept + "\n[[clients]]\ngenerator = \"go\"\ndirectory = \"./client\"\n"), "a module with pre-v2 clients", "it declares clients")
 
-    let externalRepository = composerText.replace("\"./sdk\"", "\"../sdk\"")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, externalRepository)) == false, "a Composer path outside the module keeps the runtime")
-    let externalAutoload = composerText.replace("\"src/\"", "\"../src/\"")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, externalAutoload)) == false, "an autoload path outside the module keeps the runtime")
+    let absoluteAutoload = composerText.replace("\"src/\"", "\"/opt/src/\"")
+    assertMoveRefused(ws.withNewFile("/" + composer, absoluteAutoload), "an absolute autoload path", "Composer reads /opt/src/ outside the module")
+    # The fixture sits six directories below the workspace root, so seven ".."
+    # leave the workspace.
+    let escapingAutoload = composerText.replace("\"src/\"", "\"../../../../../../../src/\"")
+    assertMoveRefused(ws.withNewFile("/" + composer, escapingAutoload), "an autoload path outside the workspace", "Composer reads ../../../../../../../src/ outside the module")
     let insideAutoload = composerText.replace("\"src/\"", "\"./lib/../src/\"")
     assert(usesEntrypoint(ws.withNewFile("/" + composer, insideAutoload)), "a path that stays in the module should not count as outside")
-    assert(usesEntrypoint(ws.withNewFile("/" + composer, composerText.replace("\"platform\"", "\"vendor-dir\": \"deps\", \"platform\""))) == false, "a moved vendor-dir keeps the runtime")
+    assertMoveRefused(ws.withNewFile("/" + composer, composerText.replace("\"platform\"", "\"vendor-dir\": \"deps\", \"platform\"")), "a moved vendor-dir", "composer.json moves vendor-dir to deps")
+    assert(installsFromComposerFiles(ws), "the fixture should install from its Composer files alone")
+    let disabled = composerText.replace("\"repositories\": [", "\"repositories\": {\"unused\": false, \"sdk\":").replace("}\n  ],", "}\n  },")
+    assert(installsFromComposerFiles(ws.withNewFile("/" + composer, disabled)) == false, "a module with another repository should install after its source")
+    let scripts = composerText.replace("\"config\"", "\"scripts\": {\"post-install-cmd\": \"true\"}, \"config\"")
+    assert(installsFromComposerFiles(ws.withNewFile("/" + composer, scripts)) == false, "a module with scripts should install after its source")
+    let escaped = composerText.replace("\"url\": \"./sdk\"", "\"url\": \"./sdk\", \"\\u006fptions\": {\"symlink\": false}")
+    assert(installsFromComposerFiles(ws.withNewFile("/" + composer, escaped)) == false, "a module with an escaped key should install after its source")
+    let unwired = composerText
+      .replace("  \"repositories\": [\n    {\n      \"type\": \"path\",\n      \"url\": \"./sdk\"\n    }\n  ],\n", "")
+      .replace(",\n    \"dagger/dagger\": \"*@dev\"", "")
+    let wired = generatedEntrypoint(ws.withNewFile("/" + composer, unwired))
+    let wiredComposer = contentsOf(wired, composer)
+    assertContains(contentsOf(wired, manifest), "source = \"./sdk/entrypoint\"", "a module without the ./sdk repository should move to the entrypoint")
+    assertContains(wiredComposer, "\"url\": \"./sdk\"", "a module should get the path repository ./sdk")
+    assertContains(wiredComposer, "\"dagger/dagger\": \"*@dev\"", "a module should require dagger/dagger")
+    assertContains(wiredComposer, "\"php\": \"8.3.7\"", "a module's other Composer keys should be kept")
+    assertContains(contentsOf(wired, entrypointModulePath + "/sdk/entrypoint/build.dang"), "\"--no-autoloader\"", "a module given the ./sdk repository should install from its Composer files alone")
+    assertNoChange(wired, "a module given the ./sdk repository")
 
-    let entrypointTable = "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n"
-    assert(
-      usesEntrypoint(migrated.withNewFile("/" + manifest, dependency + entrypointTable)) == false,
-      "an entrypoint with dependencies and a runtime reads as a runtime manifest",
-    )
     assertRefused(
-      migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n\n[[dependencies]]\nname = \"dep\"\nsource = \"../dep\"\n" + entrypointTable),
-      "without a runtime",
-      "an entrypoint with dependencies and no runtime",
-    )
-    assertRefused(
-      migrated.withNewFile("/" + composer, externalRepository),
+      migrated.withNewFile("/" + composer, absoluteAutoload),
       "cannot keep its generated entrypoint",
-      "a generated entrypoint with a Composer path outside the module",
+      "a generated entrypoint with an absolute Composer path",
     )
     assertRefused(
-      migrated.withNewFile("/" + manifest, "include = [\"src\"]\nname = \"entrypoint-app\"\n" + entrypointTable),
-      "cannot keep its generated entrypoint",
-      "a generated entrypoint with include rules",
+      migrated.withNewFile("/" + manifest, "include = [\"!../lib\"]\nname = \"entrypoint-app\"\n" + entrypointTable),
+      "its include pattern !../lib excludes outside the module",
+      "a generated entrypoint with an include pattern it cannot translate",
     )
+    assertRefused(
+      migrated.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\nname = \"entrypoint-app\"\n" + entrypointTable),
+      "it sets disableDefaultFunctionCaching",
+      "a generated entrypoint without default function caching",
+    )
+
+    let encoding = "<?php\n\nnamespace DaggerModule;\n\n#[\\Dagger\\Attribute\\DaggerObject]\nenum Encoding\n{\n    case Base64;\n    case BASE64;\n}\n"
+    let collision = generatedEntrypoint(ws.withNewFile("/" + entrypointModulePath + "/src/Encoding.php", encoding)).cwd rescue {
+      err: GraphQLError => err.message + "\n" + err.extensions
+    }
+    assertContains(collision, "its cases Base64 and BASE64 the same name, BASE64", "cases the engine names alike should be refused")
 
     let fat = kept + entrypointTable
     let keptRuntime = contentsOf(generatedEntrypoint(migrated.withNewFile("/" + manifest, fat)), manifest)
     assertContains(keptRuntime, "[runtime]", "a runtime named beside a generated entrypoint should be kept for older engines")
+    null
+  }
+
+  """
+  A module's dependencies become the clients of its scope that provide them,
+  matched by source; a dependency that no client provides is refused with the
+  command that adds it.
+  """
+  pub entrypointDependenciesCheck(ws: Workspace!): Void @check {
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let legacyJson = entrypointModulePath + "/dagger.json"
+    let kept = runtimeManifest
+    let dependency = kept + dependencyTable
+    let migrated = generatedEntrypoint(ws)
+    let unknownClients = "a direct generation does not know the clients of its scope"
+    assertContains(directError(migrated.withNewFile("/" + manifest, dependency + entrypointTable)), unknownClients, "a direct generation of an entrypoint with dependencies and a runtime should be refused")
+    let noRuntime = migrated.withNewFile("/" + manifest, "name = \"entrypoint-app\"\n" + dependencyTable + entrypointTable)
+    assertContains(directError(noRuntime), unknownClients, "a direct generation of an entrypoint with dependencies and no runtime should be refused")
+    assertRefused(noRuntime, "add each client, or remove the dependency:\n  dagger module client add ../dep", "an entrypoint with a dependency that no client provides")
+
+    let local = ws.directory("/").asWorkspace
+    let lister = local.moduleSource("/" + clientTargetPath)
+    let dependsOn = kept + "\n[[dependencies]]\n"
+    let listerSource = "source = \"../../client-target/app\"\n"
+    let named = local.withNewFile("/" + manifest, dependsOn + "name = \"file-lister\"\n" + listerSource)
+    let fromDependency = generatedEntrypoint(named, clients: [lister])
+    let dropped = contentsOf(fromDependency, manifest)
+    assertContains(dropped, "source = \"./sdk/entrypoint\"", "a module whose dependencies are clients should move to the entrypoint")
+    assertNotContains(dropped, "[[dependencies]]", "a dependency should become a client")
+    assert(exists(fromDependency, entrypointModulePath + "/sdk/generated/Clients/FileLister/Client.php"), "the dependency's client should be generated")
+    let aliased = generatedEntrypoint(local.withNewFile("/" + manifest, dependsOn + "name = \"Lister\"\nsource = \"../../client-target/app/\"\n"), clients: [lister])
+    assertNotContains(contentsOf(aliased, manifest), "[[dependencies]]", "a dependency named by an alias should match its client by source")
+    let unnamed = generatedEntrypoint(local.withNewFile("/" + manifest, dependsOn + listerSource), clients: [lister])
+    assertNotContains(contentsOf(unnamed, manifest), "[[dependencies]]", "a dependency without a name should match its client by source")
+    let keepsRuntime = generatedEntrypoint(migrated.withNewFile("/" + manifest, dependsOn + "name = \"file-lister\"\n" + listerSource + entrypointTable), clients: [lister])
+    assertNotContains(contentsOf(keepsRuntime, manifest), "[[dependencies]]", "an entrypoint that names a runtime should lose the dependencies its clients provide")
+    assertContains(contentsOf(keepsRuntime, manifest), "[runtime]", "an entrypoint that names a runtime should keep it")
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, dependsOn + "name = \"file-lister\"\nsource = \"../../client-target/maker\"\n"), clients: [lister]),
+      "add each client, or remove the dependency:\n  dagger module client add ../../client-target/maker",
+      "a client with the dependency's name and another source should not provide it",
+    )
+    assertContains(generationError(named), "matching by source as spelled, at its version or pin, not by name", "a dependency that no client provides should be refused")
+    let helpers = moduleSource("github.com/dagger/sdk-helpers@v1.0.9")
+    let helpersSource = dependsOn + "source = \"github.com/dagger/sdk-helpers@v1.0.9\"\n"
+    assertContains(generationError(local.withNewFile("/" + manifest, helpersSource.replace("v1.0.9", "v1.0.8")), clients: [helpers]), "  dagger module client add github.com/dagger/sdk-helpers@v1.0.8", "a Git dependency at another version than its client should be refused")
+    let helpersPin = "daffbc01a1b3f3df7b1c417a7d2c83cd06d1bd33"
+    [
+      [helpersSource, "a Git dependency equal to its client"],
+      [helpersSource + "pin = \"" + helpersPin + "\"\n", "a Git dependency at its client's pin"],
+    ].each { case =>
+      let provided = generatedEntrypoint(local.withNewFile("/" + manifest, case[0] ?? ""), clients: [helpers])
+      assertNotContains(contentsOf(provided, manifest), "[[dependencies]]", (case[1] ?? "") + " should be provided by its client")
+      assert(exists(provided, entrypointModulePath + "/sdk/generated/Clients/SdkHelpers/Client.php"), (case[1] ?? "") + " should get its client generated")
+      null
+    }
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"https://github.com/dagger/sdk-helpers#v1.0.9:docs\"\npin = \"" + helpersPin + "\"\n"), clients: [helpers]),
+      "has the dependency https://github.com/dagger/sdk-helpers#v1.0.9:docs, whose # selector php-sdk does not compare",
+      "a dependency with a # selector should be refused as such",
+    )
+    let helpersQuery = moduleSource("github.com/dagger/sdk-helpers@v1")
+    let queried = generatedEntrypoint(local.withNewFile("/" + manifest, dependsOn + "source = \"github.com/dagger/sdk-helpers@v1\"\npin = \"" + helpersQuery.pin + "\"\n"), clients: [helpersQuery])
+    assertNotContains(contentsOf(queried, manifest), "[[dependencies]]", "a dependency at a version query should be provided by its client at the pin the query resolved to")
+    let fakePin = "1111111111111111111111111111111111111111"
+    [
+      ["ssh://git@example.com/org/repo", "ssh://git@example.com/org/repo@" + fakePin],
+      ["https://user@example.com/org/repo@v2", "https://user@example.com/org/repo@" + fakePin],
+      ["git@example.com:org/repo@feature/x", "git@example.com:org/repo@" + fakePin],
+    ].each { case =>
+      assertContains(
+        generationError(local.withNewFile("/" + manifest, dependsOn + "source = \"" + (case[0] ?? "") + "\"\npin = \"" + fakePin + "\"\n"), clients: [helpers]),
+        "  dagger module client add " + (case[1] ?? ""),
+        (case[0] ?? "") + " should be named at its pin",
+      )
+      null
+    }
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, helpersSource + "pin = \"0000000000000000000000000000000000000000\"\n"), clients: [helpers]),
+      "  dagger module client add github.com/dagger/sdk-helpers@0000000000000000000000000000000000000000",
+      "a Git dependency pinned to another commit than its client should be refused, with its pin",
+    )
+    assertContains(
+      generationError(local.withNewFile("/" + manifest, dependsOn + "name = \"sdk-helpers\"\nsource = \"../expected\"\n"), clients: [helpers]),
+      "  dagger module client add ../expected",
+      "a local dependency should not be provided by a Git client of the same name",
+    )
+    let legacyStrings = ws
+      .withoutFile("/" + manifest)
+      .withNewFile("/" + legacyJson, "{\"name\": \"entrypoint-app\", \"engineVersion\": \"v1.0.0-0\", \"sdk\": {\"source\": \"php\"}, \"dependencies\": [\"github.com/acme/dep@v1\"]}\n")
+    assertContains(generationError(legacyStrings), "  dagger module client add github.com/acme/dep@v1", "a dependency written as a source string should be read as its source")
     null
   }
 
@@ -453,11 +813,23 @@ type E2e {
 
   """
   The generated entrypoint answers calls from a local and from a Git source:
-  constructor, state, enums, nested and empty lists, IDs, omitted values, a check,
-  and an error that keeps its message.
+  constructor, state, enums, nested and empty lists, IDs, omitted values,
+  one function per role, and an error that keeps its message. A module that
+  excludes files does not see them.
   """
   pub generatedEntrypointCallCheck(ws: Workspace!): Void @check {
     assertCalls(generatedEntrypoint(ws).directory("/" + entrypointModulePath))
+
+    let manifest = entrypointModulePath + "/dagger-module.toml"
+    let excluding = ws
+      .withNewFile("/" + manifest, "exclude = [\"notes\"]\n" + contentsOf(ws, manifest))
+      .withNewFile("/" + entrypointModulePath + "/notes/hidden.txt", "hidden\n")
+    let filtered = callClient
+      .withDirectory("/work/app", generatedEntrypoint(excluding).directory("/" + entrypointModulePath))
+      .withWorkdir("/work/app")
+      .withExec(["git", "init", "--quiet"])
+    assertContains(call(filtered, ["call", "has-file", "--path", "notes/hidden.txt"]), "false", "an excluded file should not reach the module")
+    assertContains(call(filtered, ["call", "has-file", "--path", "composer.json"]), "true", "a file the patterns keep should reach the module")
 
     assertTemplateCalls(
       phpSdk.generateScope(ws.withWorkdir(layeringModulePath), isModule: true, name: "layering", clients: [])
@@ -467,45 +839,148 @@ type E2e {
   }
 
   """
-  A pinned targetVersion reaches dang.toml and the entrypoint's
-  DAGGER_CLIENT_VERSION through generateScope and a direct mod, and stays there
-  on a second generation. A release later than the SDK's target is refused on
-  both paths, and so is a pin on a module that keeps the runtime.
+  The outside fixture with its path repository ../lib replaced by path.
   """
-  pub targetVersionCheck(ws: Workspace!): Void @check {
-    let pinned = "v1.0.0-beta.24"
-    let sdk = phpSdk(targetVersion: pinned)
-    let generated = generatedEntrypoint(ws, sdk)
-    let direct = ws.withChanges(sdk.mod(ws, path: entrypointModulePath, findUp: false).generate)
-    [generated, direct].each { out =>
-      assertContains(contentsOf(out, entrypointConfigPath), "dagger = \"" + pinned + "\"", "dang.toml should declare the pinned target")
-      assertContains(
-        contentsOf(out, entrypointModulePath + "/sdk/entrypoint/main.dang"),
-        "\"DAGGER_CLIENT_VERSION\", \"" + pinned + "\"",
-        "the entrypoint should declare the pinned target",
-      )
-    }
-    assert(generatedEntrypoint(generated, sdk).changes(generated).isEmpty, "a second pinned generation changed the module")
-    let later = phpSdk(targetVersion: "v1.0.0-beta.26")
-    let refusal = "pins targetVersion v1.0.0-beta.26, which this release of the PHP SDK cannot generate for"
-    assertContains(generationError(ws, later), refusal, "a later release should be refused")
-    let directRefused = later.mod(ws, path: entrypointModulePath, findUp: false).rootPath rescue { err: Error => err.message }
-    assertContains(directRefused, refusal, "a later release should be refused on a direct mod")
-    let manifest = entrypointModulePath + "/dagger-module.toml"
-    let kept = generationError(ws.withNewFile("/" + manifest, "include = [\"src\"]\n" + contentsOf(ws, manifest)), sdk)
-    assertContains(kept, "applies to the generated entrypoint only", "a pin on a module that keeps the runtime should be refused")
+  let outsideWith(ws: Workspace!, path: String!): Workspace! {
+    let composer = outsideModulePath + "/composer.json"
+    ws.withNewFile("/" + composer, contentsOf(ws, composer).replace("\"../lib\"", "\"" + path + "\""))
   }
 
   """
-  The default new-module path: a module from the minimal template has neither
-  fields nor a constructor of its own, and calls the engine from its function.
+  A module whose Composer path repository and autoload root sit outside its
+  directory moves to the entrypoint, whose include lists them: a call reads
+  both, and an edit outside the module reaches the next call. An include
+  directory outside the module reaches the call too, and a runtime kept beside
+  the entrypoint keeps the outside directories before the exclusions. A path
+  include cannot load is refused. A file outside the module, a path with a ".." after
+  a name, and the workspace root are refused.
+  """
+  pub entrypointOutsidePathsCheck(ws: Workspace!): Void @check {
+    let outside = fixtureRoot + "/outside"
+    let composer = outsideModulePath + "/composer.json"
+    let composerText = contentsOf(ws, composer)
+    let generated = generatedEntrypoint(ws, path: outsideModulePath, name: "outside-app")
+    assertNotContains(contentsOf(generated, outsideModulePath + "/dagger-module.toml"), "[runtime]", "the module should move to the entrypoint")
+    assertContains(contentsOf(generated, outsideModulePath + "/dagger-module.toml"), "\"../shared/src\"", "include should list the autoload root")
+
+    # The engine reads a local module's context from its Git root, which must
+    # hold the directories outside the module.
+    let local = callClient
+      .withDirectory("/work", generated.directory("/" + outside))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/app")
+    assertContains(call(local, ["call", "greet"]), "hello from lib!", "the call should read the path repository and the autoload root")
+    let edited = local.withExec(["sed", "-i", "s/hello from lib/hello again/", "/work/lib/src/Greeting.php"])
+    assertContains(call(edited, ["call", "greet"]), "hello again!", "an edit outside the module should reach the next call")
+
+    let manifest = outsideModulePath + "/dagger-module.toml"
+    let including = generatedEntrypoint(ws.withNewFile("/" + manifest, "include = [\"!notes\", \"../extra\"]\n" + contentsOf(ws, manifest)), path: outsideModulePath, name: "outside-app")
+    assertContains(contentsOf(including, manifest), "\"../lib\"", "include should list the Composer paths outside the module")
+    assert(
+      generatedEntrypoint(including, path: outsideModulePath, name: "outside-app").changes(including).isEmpty,
+      "a second generation with exclusions and Composer paths outside the module changed it",
+    )
+    let ancestorComposer = composerText.replace("\"Shared\\\\\": \"../shared/src/\"", "\"Shared\\\\\": \"../shared/src/\", \"Outside\\\\\": \"../\"")
+    ["include = [\"!notes\"]\n", "exclude = [\"notes\"]\n"].each { patterns =>
+      let retained = including
+        .withNewFile("/" + composer, ancestorComposer)
+        .withNewFile("/" + manifest, patterns + contentsOf(ws, manifest) + "\n[entrypoint]\nkind = \"dang\"\nsource = \"./sdk/entrypoint\"\n")
+      let kept = generatedEntrypoint(retained, path: outsideModulePath, name: "outside-app")
+      let keptManifest = contentsOf(kept, manifest)
+      assertContains(keptManifest, "[runtime]", "a runtime named beside the entrypoint should be kept")
+      assertContains(keptManifest, "engineVersion = \"v1.0.0-beta.27\"", "a runtime named beside the entrypoint should keep its engineVersion")
+      assert(keptManifest.containsMatch("\"\\.\\.\"[^\\]]*\"!notes\""), "include should list an ancestor Composer directory before the exclusions of " + patterns + ": " + keptManifest)
+      assert(
+        generatedEntrypoint(kept, path: outsideModulePath, name: "outside-app").changes(kept).isEmpty,
+        "a second generation of a retained runtime with an ancestor Composer directory and " + patterns + " changed it",
+      )
+      null
+    }
+    [
+      ["../lib/composer.json", "it reads the file ../lib/composer.json outside the module"],
+      ["../../../../../../", "outside the module cannot be loaded from the workspace"],
+    ].each { case =>
+      let pattern = case[0] ?? ""
+      let changed = ws.withNewFile("/" + manifest, "include = [\"" + pattern + "\"]\n" + contentsOf(ws, manifest))
+      assertMoveRefused(changed, "the include pattern " + pattern, case[1] ?? "", outsideModulePath)
+      null
+    }
+    let withInclude = callClient
+      .withDirectory("/work", including.directory("/" + outside))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/app")
+    assertContains(call(withInclude, ["call", "greet"]), "hello from lib!", "a module with include should still read its Composer paths")
+    assertContains(call(withInclude, ["call", "extra"]), "extra note", "an include directory outside the module should reach the call")
+
+    [
+      ["../missing", "holds no file in the workspace", "a path that holds no file"],
+      ["../linked", "goes through the symlink", "a path through a symlink"],
+    ].each { case =>
+      let changed = ws
+        .withDirectory("/" + outside, directory.withSymlink("lib", "linked"))
+        .withNewFile("/" + composer, composerText.replace("\"../lib\"", "\"" + (case[0] ?? "") + "\""))
+      assertContains(generationError(changed, path: outsideModulePath, name: "outside-app"), case[1] ?? "", (case[2] ?? "") + " should be refused")
+      null
+    }
+    assertMoveRefused(outsideWith(ws, "../lib/composer.json"), "a Composer path to a file outside the module", "it reads the file ../lib/composer.json outside the module", outsideModulePath)
+    assertMoveRefused(outsideWith(ws, "../bridge/../lib"), "a path with a .. after a name", "Composer reads ../bridge/../lib outside the module", outsideModulePath)
+    assertMoveRefused(outsideWith(ws, "../../../../../../"), "a path to the workspace root", "Composer reads ../../../../../../ outside the module", outsideModulePath)
+    let ignored = ws.withNewFile("/" + outside + "/lib/.gitignore", "*\n")
+    assertContains(generationError(ignored, path: outsideModulePath, name: "outside-app"), "holds no file that .gitignore keeps", "a path that .gitignore empties should be refused")
+    null
+  }
+
+  """
+  A Dang module passes objects of a third module to a PHP function that takes
+  the PHP module's interface, alone and in a list, and gets them back, through
+  dagger call. Loaded under another name, the PHP module fails on the
+  interface, which the engine then names after that name.
+  """
+  pub entrypointInterfaceCallCheck(ws: Workspace!): Void @check {
+    let generated = phpSdk.generateScope(ws.withWorkdir(interfacesPath + "/geometry"), isModule: true, name: "geometry", clients: [])
+    let app = callClient
+      .withDirectory("/work", generated.withWorkdir(".").directory("/" + interfacesPath))
+      .withWorkdir("/work")
+      .withExec(["git", "init", "--quiet"])
+      .withWorkdir("/work/caller")
+    let described = call(app, ["call", "describe"])
+    assert(described.trimSpace == "square 18;square,circle", "the PHP module should query the caller's objects through its interface: " + described)
+    let returned = call(app, ["call", "returned"])
+    assert(returned.trimSpace == "circle;circle,square", "the PHP module should return the caller's objects through its interface: " + returned)
+
+    let aliased = app
+      .withWorkdir("/work/alias")
+      .withExec(["dagger", "-m", ".", "call", "describe"], experimentalPrivilegedNesting: true, expect: ReturnType.FAILURE)
+      .stderr
+    assertContains(aliased, "GeometryShape", "a module loaded under another name should fail on the interface type the engine names otherwise")
+  }
+
+  """
+  The workspace with dagger.toml recording the setting line given for the scope
+  at key, in the SDK entry that names php-sdk as its module.
+  """
+  let recordedScope(ws: Workspace!, key: String!, line: String!): Workspace! {
+    let config = contentsOf(ws, "dagger.toml")
+    let entry = if (config.contains("[sdks.php]")) { "" } else { "\n[sdks.php]\nmodule = \"php-sdk\"\n" }
+    let record = entry + "\n[sdks.php.scopes.\"" + key + "\"]\nis-module = true\n\n[sdks.php.scopes.\"" + key + "\".settings]\n" + line + "\n"
+    ws.withNewFile("/dagger.toml", config + record)
+  }
+
+  """
+  The default new-module path: a module from the default template takes the
+  workspace in its constructor, keeps its source and base image, and builds a
+  container from them through core().
   """
   let assertTemplateCalls(module: Directory!): Void {
     let templated = callClient
       .withDirectory("/work/app", module)
       .withWorkdir("/work/app")
       .withExec(["git", "init", "--quiet"])
-    assertContains(call(templated, ["call", "container-echo", "--string-arg", "from the template", "stdout"]), "from the template", "a main object without a constructor of its own should answer")
+    let printed = call(templated, ["call", "container", "with-exec", "--args", "cat,/etc/alpine-release,composer.json", "stdout"])
+    assertContains(printed, "3.24.", "the container should start from the default base image")
+    assertContains(printed, "daggermodule/layering", "the container should hold the workspace source")
     null
   }
 
@@ -527,13 +1002,30 @@ type E2e {
     assertContains(call(local, ["call", "nothing", "--json"]), "[]", "an empty list should stay a list")
     assertContains(call(local, ["call", "entries", "--dir", "./src"]), "EntrypointApp.php", "a Directory ID should load")
     local.withExec(["dagger", "-m", ".", "check", "self-check"], experimentalPrivilegedNesting: true).sync
+    assertContains(call(local, ["generate", "-l"]), "self-generate", "the generator should be listed")
+    assertContains(call(local, ["start", "-l"]), "self-up", "the up function should be listed")
+    assertContains(call(local, ["agent", "-l"]), "self-agent", "the agent should be listed")
 
     let failure = local
       .withExec(["dagger", "-m", ".", "call", "fail"], experimentalPrivilegedNesting: true, expect: ReturnType.FAILURE)
       .stderr
     assertContains(failure, "the fixture failed on purpose", "the function's error should reach the caller")
 
-    let server = container
+    let server = gitServer(module).asService
+    let ref = gitAddress(server) + "@main"
+    let remote = callClient
+      .withServiceBinding(server.hostname, server)
+      .withExec(["sh", "-c", "dagger -m \"" + ref + "\" call greet"], experimentalPrivilegedNesting: true)
+      .stdout
+    assertContains(remote, "hello world", "a module from a Git source should answer")
+    null
+  }
+
+  """
+  A Git daemon serving the module at repo.git, on branch main.
+  """
+  let gitServer(module: Directory!): Container! {
+    container
       .from("alpine:3.22")
       .withoutEntrypoint
       .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
@@ -545,31 +1037,100 @@ type E2e {
       .withExec(["git", "clone", "-q", "--bare", ".", "/srv/repo.git"])
       .withExposedPort(9418)
       .withDefaultArgs(["git", "daemon", "--export-all", "--base-path=/srv", "/srv"])
-      .asService
-    # The engine takes a Git ref whose host has no dot for a Go import path and
-    # refuses it, so the ref names the server by its full name, in the session
-    # domain that resolv.conf searches last.
-    let ref = "git://" + server.hostname + ".$(awk '/^search/ {print $NF}' /etc/resolv.conf)/repo.git@main"
-    let remote = callClient
-      .withServiceBinding(server.hostname, server)
-      .withExec(["sh", "-c", "dagger -m \"" + ref + "\" call greet"], experimentalPrivilegedNesting: true)
-      .stdout
-    assertContains(remote, "hello world", "a module from a Git source should answer")
-    null
   }
 
   """
-  The unit tests of the entrypoint support, against a client of the target schema.
+  The engine takes a Git ref whose host has no dot for a Go import path and
+  refuses it, so the address names the server by its full name, in the session
+  domain that resolv.conf searches last. A shell expands it.
   """
-  pub sdkUnitCheck(ws: Workspace!): Void @check {
+  let gitAddress(server: Service!): String! {
+    "git://" + server.hostname + ".$(awk '/^search/ {print $NF}' /etc/resolv.conf)/repo.git"
+  }
+
+  """
+  A client generated for a Dang module serves it and answers a PHP call that
+  passes a core Directory: from a local path, and from Git at a pinned commit
+  that main has moved past.
+  """
+  pub clientTargetCallCheck(ws: Workspace!): Void @check {
+    let local = "/" + clientTargetPath
+    let script = "<?php\nrequire 'vendor/autoload.php';\n" +
+      "use Dagger\\Clients\\FileLister\\Client;\n" +
+      "$dir = Dagger\\Dagger::getClientInstance()->directory()->withNewFile('a.txt', 'a')->withNewFile('b.txt', 'b');\n" +
+      "echo Client::fileLister()->entries($dir), PHP_EOL;\n" +
+      "echo Client::fileLister()->entries($dir->withNewFile('c.txt', 'c')), PHP_EOL;\n"
+    let php = sdkLibrary(ws, false)
+      .withMountedFile("/schema.json", ws.moduleSource(local).withEngineVersion(target).clientSchemaIntrospectionJSON)
+      .withNewFile("/sdk/call.php", script)
+      .withEnvVariable("DAGGER_CLIENT_VERSION", target)
+    let codegen = "php scripts/codegen.php dagger:codegen --schema-file /schema.json --client file-lister"
+    let want = "a.txt,b.txt\na.txt,b.txt,c.txt\n"
+
+    let fromPath = php
+      .withExec(["sh", "-c", codegen + " --address " + local + " > /dev/null && php call.php"], experimentalPrivilegedNesting: true)
+      .stdout
+    assert(fromPath == want, "a client of a local module should list the directory it was passed: " + fromPath)
+
+    let repo = gitServer(ws.directory(local))
+    let pin = repo.withExec(["git", "-C", "/srv/repo.git", "rev-parse", "main"]).stdout.trimSuffix("\n")
+    let server = repo
+      .withExec(["sed", "-i", "s/join(\",\")/join(\";\")/", "main.dang"])
+      .withExec(["git", "-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-qam", "list with semicolons"])
+      .withExec(["git", "push", "-q", "/srv/repo.git", "main"])
+      .asService
+    let fromGit = php
+      .withServiceBinding(server.hostname, server)
+      .withExec(["sh", "-c", codegen + " --address \"" + gitAddress(server) + "@main\" --pin " + pin + " > /dev/null && php call.php"], experimentalPrivilegedNesting: true)
+      .stdout
+    assert(fromGit == want, "a client of a Git module should load its pinned commit, not the tip of main: " + fromGit)
+  }
+
+  """
+  The SDK library of the workspace with its core client generated against the
+  target schema, and with its dev tooling when dev is true.
+  """
+  let sdkLibrary(ws: Workspace!, dev: Boolean! = true): Container! {
     let mod = phpSdk.mod(ws, path: entrypointModulePath, findUp: false)
     mod.phpContainer
       .withDirectory("/sdk", ws.directory("/sdk", exclude: ["vendor", "generated", ".cache"]))
       .withWorkdir("/sdk")
-      .withExec(["composer", "install"])
-      .withMountedFile("/schema.json", mod.clientSchema)
-      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/schema.json"])
-      .withExec(["vendor/bin/phpunit", "--filter", unitTestFilter])
+      .withExec(["composer", "install"] + (if (dev) { [] :: [String!]! } else { ["--no-dev"] }))
+      .withMountedFile("/core-schema.json", mod.clientSchema)
+      .withExec(["php", "scripts/codegen.php", "dagger:codegen", "--schema-file", "/core-schema.json"])
+  }
+
+  """
+  The unit tests of the PHP library.
+  """
+  pub sdkUnitCheck(ws: Workspace!): Void @check {
+    sdkLibrary(ws).withExec(["vendor/bin/phpunit", "--group", "unit"]).sync
+    null
+  }
+
+  """
+  The PSR-12 style of the PHP library.
+  """
+  pub sdkStyleCheck(ws: Workspace!): Void @check {
+    sdkLibrary(ws).withExec(["vendor/bin/phpcs"]).sync
+    null
+  }
+
+  """
+  The PHPStan analysis of the PHP library.
+  """
+  pub sdkAnalysisCheck(ws: Workspace!): Void @check {
+    sdkLibrary(ws).withExec(["vendor/bin/phpstan", "analyse", "--no-progress", "--memory-limit=1G"]).sync
+    null
+  }
+
+  """
+  The Composer metadata and PSR-4 layout of the PHP library.
+  """
+  pub sdkComposerCheck(ws: Workspace!): Void @check {
+    sdkLibrary(ws)
+      .withExec(["composer", "validate", "--strict"])
+      .withExec(["composer", "dump-autoload", "--classmap-authoritative", "--strict-psr", "--strict-ambiguous"])
       .sync
     null
   }

@@ -10,6 +10,7 @@ use Dagger\TypeDefKind;
 use Dagger\ValueObject\ListOfType;
 use DaggerModule\Helper;
 use DaggerModule\Main;
+use DaggerModule\Shape;
 use DaggerModule\Mode;
 use Nette\PhpGenerator\ClassType;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -28,7 +29,7 @@ class EntrypointMetadataTest extends TestCase
         $description = Description::fromDirectory(__DIR__ . '/Fixture');
 
         self::assertSame(
-            [Helper::class, Main::class],
+            [Helper::class, Main::class, Shape::class],
             array_map(static fn($object) => $object->name, $description->objects),
         );
         self::assertSame(
@@ -46,6 +47,9 @@ class EntrypointMetadataTest extends TestCase
         self::assertInstanceOf(ListOfType::class, $main->daggerFields['modes']->type);
         self::assertTrue($main->hasConstructor());
         self::assertTrue($main->daggerFunctions['lint']->withCheck);
+        self::assertTrue($main->daggerFunctions['generate']->withGenerator);
+        self::assertTrue($main->daggerFunctions['serve']->withUp);
+        self::assertTrue($main->daggerFunctions['assist']->withAgent);
         self::assertArrayNotHasKey('notExposed', $main->daggerFunctions);
         self::assertSame(
             TypeDefKind::OBJECT_KIND,
