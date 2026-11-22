@@ -264,6 +264,79 @@ class FunctionErrorTest extends TestCase
         self::assertSame(FunctionError::MARKER . '"two\nlines' . self::ORIGIN . '"', end($lines));
     }
 
+    /**
+     * An engine that reads no file shows no exec's logs with its error, so
+     * the output of the failed exec goes to the dispatcher's own streams, as
+     * before the file.
+     */
+    #[Test]
+    public function itFallsBackWithTheOutputOfAFailedExec(): void
+    {
+        $inner = self::queryError('exit code: 1' . self::ORIGIN, self::EXEC_ERROR);
+        $error = new RuntimeException('ran a failing command: ' . $inner->getMessage(), previous: $inner);
+        $stdout = fopen('php://memory', 'w+');
+        $stderr = fopen('php://memory', 'w+');
+        self::assertNotFalse($stdout);
+        self::assertNotFalse($stderr);
+
+        $this->functionError()->report($error, null, $stderr, $stdout);
+
+        rewind($stdout);
+        rewind($stderr);
+        self::assertSame("exec stdout\n", stream_get_contents($stdout));
+        self::assertStringEndsWith(
+            "exec stderr\n" . FunctionError::MARKER . '"ran a failing command: exit code: 1' . self::ORIGIN . "\"\n",
+            (string) stream_get_contents($stderr),
+        );
+    }
+
+    #[Test]
+    public function itReportsAFatalError(): void
+    {
+        $path = $this->tempFile();
+        $stderr = fopen('php://memory', 'w+');
+        self::assertNotFalse($stderr);
+        $fatal = ['type' => E_ERROR, 'message' => 'Allowed memory size exhausted', 'file' => __FILE__, 'line' => 1];
+
+        $this->functionError()->reportFatal($fatal, $path, $stderr);
+
+        self::assertSame('{"message":"Allowed memory size exhausted","values":{}}', file_get_contents($path));
+        rewind($stderr);
+        self::assertSame('', stream_get_contents($stderr), 'PHP shows a fatal error itself');
+    }
+
+    #[Test]
+    public function itReportsAFatalErrorWithTheMarker(): void
+    {
+        $stderr = fopen('php://memory', 'w+');
+        self::assertNotFalse($stderr);
+        $fatal = ['type' => E_COMPILE_ERROR, 'message' => 'Cannot redeclare f()', 'file' => __FILE__, 'line' => 1];
+
+        $this->functionError()->reportFatal($fatal, null, $stderr);
+
+        rewind($stderr);
+        self::assertSame(FunctionError::MARKER . "\"Cannot redeclare f()\"\n", stream_get_contents($stderr));
+    }
+
+    #[Test]
+    public function itIgnoresAnErrorThatIsNotFatal(): void
+    {
+        $path = $this->tempFile();
+        $stderr = fopen('php://memory', 'w+');
+        self::assertNotFalse($stderr);
+
+        $this->functionError()->reportFatal(null, $path, $stderr);
+        $this->functionError()->reportFatal(
+            ['type' => E_WARNING, 'message' => 'mkdir(): File exists', 'file' => __FILE__, 'line' => 1],
+            $path,
+            $stderr,
+        );
+
+        self::assertSame('', file_get_contents($path));
+        rewind($stderr);
+        self::assertSame('', stream_get_contents($stderr));
+    }
+
     #[Test]
     public function itFallsBackToTheMarkerWhenTheFileCannotBeWritten(): void
     {

@@ -250,15 +250,17 @@ class DangEntrypointRendererTest extends TestCase
         self::assertStringContainsString('.contents rescue {', $main);
         self::assertStringContainsString('err: GraphQLError => raiseFunctionError(err)', $main);
         self::assertStringContainsString(
-            "    let installed = runtime.sync\n    let result = installed\n",
+            "    let installed = runtime.sync rescue {\n"
+                . "      err: GraphQLError => raiseWithStderr(err)\n"
+                . "    }\n"
+                . "    let result = installed\n",
             $main,
-            'a failed install stays out of the rescue',
+            'a failed install stays out of the function error rescue',
         );
         self::assertStringContainsString(
             "pub prebuild: File! {\n    runtime.file(\"vendor/autoload.php\")\n  }",
             $main,
         );
-        self::assertStringNotContainsString('raise stderr', $main);
         self::assertStringContainsString(
             'PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed',
             $main,
@@ -283,8 +285,19 @@ class DangEntrypointRendererTest extends TestCase
             $main,
         );
         self::assertStringContainsString(
-            'raise ((JSON.decode(lines.takeLast(1).join("").trimPrefix(marker)) :: String!) rescue err.message)',
+            "    if (lines.isEmpty) {\n      raiseWithStderr(err)\n    }\n"
+                . '    raise ((JSON.decode(lines.takeLast(1).join("").trimPrefix(marker)) :: String!) rescue err.message)',
             $main,
+        );
+        self::assertStringContainsString(
+            "let marked = ((JSON.decode(err.extensions) :: {{moduleProcess: Boolean}}).moduleProcess ?? false) rescue false\n"
+                . "    let stderr = ((JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? \"\") rescue \"\"\n"
+                . "    if (marked or stderr == \"\") {\n"
+                . "      raise err\n"
+                . "    }\n"
+                . "    raise stderr\n",
+            $main,
+            'an engine that marks no module process gets the exec stderr, as before',
         );
     }
 
