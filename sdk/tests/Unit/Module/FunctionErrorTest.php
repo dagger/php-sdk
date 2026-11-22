@@ -318,6 +318,41 @@ class FunctionErrorTest extends TestCase
         self::assertSame(FunctionError::MARKER . "\"Cannot redeclare f()\"\n", stream_get_contents($stderr));
     }
 
+    /**
+     * The commonest fatal error, exhausted memory, leaves the shutdown
+     * function no memory of its own but what reportFatalErrors reserved.
+     */
+    #[Test]
+    public function itReportsExhaustedMemory(): void
+    {
+        $path = $this->tempFile();
+        $sdk = dirname(__DIR__, 3);
+        $script = sprintf(
+            'require %s; Dagger\Module\FunctionError::forModule(%s, %s)->reportFatalErrors(%s, STDERR);'
+                . ' $kept = []; while (true) { $kept[] = new stdClass(); }',
+            var_export("$sdk/vendor/autoload.php", true),
+            var_export("$sdk/src", true),
+            var_export($sdk, true),
+            var_export($path, true),
+        );
+        $process = proc_open(
+            [PHP_BINARY, '-d', 'memory_limit=32M', '-d', 'display_errors=0', '-d', 'log_errors=0', '-r', $script],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+        self::assertIsResource($process);
+        $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        self::assertSame(255, proc_close($process), $output);
+        self::assertStringStartsWith(
+            '{"message":"Allowed memory size of 33554432 bytes exhausted',
+            (string) file_get_contents($path),
+            $output,
+        );
+    }
+
     #[Test]
     public function itIgnoresAnErrorThatIsNotFatal(): void
     {
