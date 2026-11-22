@@ -8,6 +8,7 @@ use Dagger\Module\FunctionError;
 use GraphQL\Exception\QueryError;
 use ParseError;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -318,22 +319,35 @@ class FunctionErrorTest extends TestCase
         self::assertSame(FunctionError::MARKER . "\"Cannot redeclare f()\"\n", stream_get_contents($stderr));
     }
 
+    /** @return array<string, array{string}> */
+    public static function memoryExhaustions(): array
+    {
+        return [
+            'by a growing array' => ['$kept = []; while (true) { $kept[] = new stdClass(); }'],
+            // Leaves the shutdown function no memory of its own but what
+            // reportFatalErrors reserved: without it, nothing is reported.
+            'by deep recursion' => [
+                'function r($n) { $a = [$n, new stdClass()]; return r($n + 1) + count($a); } r(0);',
+            ],
+        ];
+    }
+
     /**
-     * The commonest fatal error, exhausted memory, leaves the shutdown
-     * function no memory of its own but what reportFatalErrors reserved.
+     * The commonest fatal error, exhausted memory, is reported too.
      */
     #[Test]
-    public function itReportsExhaustedMemory(): void
+    #[DataProvider('memoryExhaustions')]
+    public function itReportsExhaustedMemory(string $workload): void
     {
         $path = $this->tempFile();
         $sdk = dirname(__DIR__, 3);
         $script = sprintf(
-            'require %s; Dagger\Module\FunctionError::forModule(%s, %s)->reportFatalErrors(%s, STDERR);'
-                . ' $kept = []; while (true) { $kept[] = new stdClass(); }',
+            'require %s; Dagger\Module\FunctionError::forModule(%s, %s)->reportFatalErrors(%s, STDERR); %s',
             var_export("$sdk/vendor/autoload.php", true),
             var_export("$sdk/src", true),
             var_export($sdk, true),
             var_export($path, true),
+            $workload,
         );
         $process = proc_open(
             [PHP_BINARY, '-d', 'memory_limit=32M', '-d', 'display_errors=0', '-d', 'log_errors=0', '-r', $script],
