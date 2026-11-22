@@ -6,6 +6,7 @@ namespace Dagger\Tests\Unit\Module;
 
 use Dagger\Module\DangEntrypointRenderer;
 use Dagger\Module\Description;
+use Dagger\Module\FunctionError;
 use Dagger\ModuleNaming;
 use Dagger\ValueObject\DaggerEnum;
 use Dagger\ValueObject\DaggerEnumCase;
@@ -247,11 +248,42 @@ class DangEntrypointRendererTest extends TestCase
         self::assertStringContainsString('experimentalPrivilegedNesting: true)', $main);
         self::assertStringContainsString('.file("/dagger/result.json")', $main);
         self::assertStringContainsString('.contents rescue {', $main);
-        self::assertStringContainsString('err: GraphQLError =>', $main);
-        self::assertStringContainsString('{ raise err }', $main);
-        self::assertStringContainsString('raise stderr', $main);
+        self::assertStringContainsString('err: GraphQLError => raiseFunctionError(err)', $main);
+        self::assertStringContainsString(
+            "    let installed = runtime.sync\n    let result = installed\n",
+            $main,
+            'a failed install stays out of the rescue',
+        );
+        self::assertStringContainsString(
+            "pub prebuild: File! {\n    runtime.file(\"vendor/autoload.php\")\n  }",
+            $main,
+        );
+        self::assertStringNotContainsString('raise stderr', $main);
         self::assertStringContainsString(
             'PhpModuleBuild(contextDir: currentModule.contextDirectory, subPath: currentModule.sourceSubpath).installed',
+            $main,
+        );
+    }
+
+    /**
+     * The exec error is raised as it is when the engine read the function's
+     * error from its file; otherwise the marker line, then the exec error.
+     */
+    #[Test]
+    public function itRaisesTheFunctionError(): void
+    {
+        $main = DangEntrypointRenderer::renderMain('v1.0.0-beta.21');
+
+        self::assertStringContainsString(
+            "let reported = ((JSON.decode(err.extensions) :: {{functionError: {{message: String, id: String}}}}).functionError != null) rescue false\n"
+                . "    if (reported) {\n"
+                . "      raise err\n"
+                . "    }\n"
+                . '    let marker = "' . FunctionError::MARKER . "\"\n",
+            $main,
+        );
+        self::assertStringContainsString(
+            'raise ((JSON.decode(lines.takeLast(1).join("").trimPrefix(marker)) :: String!) rescue err.message)',
             $main,
         );
     }
