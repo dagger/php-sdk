@@ -5,6 +5,7 @@ use Dagger\Dagger;
 use Dagger\Module\CallDispatcher;
 use Dagger\Module\DangEntrypointRenderer;
 use Dagger\Module\Description;
+use Dagger\Module\FunctionError;
 use Dagger\Module\InterfaceClients;
 use Dagger\Module\ValueCodec;
 use GraphQL\Exception\QueryError;
@@ -46,6 +47,16 @@ require $autoload;
 $mode = $argv[1] ?? '';
 $options = options(array_slice($argv, 2));
 
+// Made before the function runs, which may change the working directory.
+$functionError = FunctionError::forModule(dirname(__DIR__), (string) getcwd());
+$functionErrorPath = getenv(FunctionError::PATH_ENV);
+$functionErrorPath = $functionErrorPath === false ? null : $functionErrorPath;
+if ($mode === 'call') {
+    // A fatal error, such as exhausted memory or a class that can't be
+    // declared, ends the script with no Throwable to catch below.
+    $functionError->reportFatalErrors($functionErrorPath, STDERR);
+}
+
 try {
     switch ($mode) {
         case 'generate':
@@ -72,12 +83,19 @@ try {
         default:
             fail(USAGE, 2);
     }
-} catch (QueryError $e) {
-    $extensions = $e->getErrorDetails()['extensions'] ?? [];
-    fwrite(STDOUT, $extensions['stdout'] ?? '');
-    fwrite(STDERR, $e->getMessage() . "\n" . ($extensions['stderr'] ?? ''));
-    exit($extensions['exitCode'] ?? 1);
 } catch (Throwable $t) {
-    fwrite(STDERR, sprintf("dagger-module: %s: %s\n%s\n", $t::class, $t->getMessage(), $t->getTraceAsString()));
-    exit(1);
+    if ($mode === 'call') {
+        // A failed call exits 2, so that its exec isn't cached, and reports
+        // the function's error to the engine; see FunctionError.
+        $functionError->report($t, $functionErrorPath, STDERR, STDOUT);
+        exit(2);
+    }
+    if (!$t instanceof QueryError) {
+        fwrite(STDERR, sprintf("dagger-module: %s: %s\n%s\n", $t::class, $t->getMessage(), $t->getTraceAsString()));
+        exit(1);
+    }
+    $extensions = $t->getErrorDetails()['extensions'] ?? [];
+    fwrite(STDOUT, $extensions['stdout'] ?? '');
+    fwrite(STDERR, $t->getMessage() . "\n" . ($extensions['stderr'] ?? ''));
+    exit($extensions['exitCode'] ?? 1);
 }

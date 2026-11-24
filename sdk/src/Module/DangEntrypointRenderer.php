@@ -289,6 +289,13 @@ final readonly class DangEntrypointRenderer
         ModuleTypes().all
       }
 
+      # The module with its Composer dependencies installed, which every call
+      # runs: the engine builds it ahead of a call, as the module's build, so
+      # a failed install shows as the build's, with Composer's output.
+      pub prebuild: File! {
+        runtime.file("vendor/autoload.php")
+      }
+
       pub call(
         receiverType: String!,
         receiverValue: JSON,
@@ -302,7 +309,13 @@ final readonly class DangEntrypointRenderer
           fnName: fnName,
           fnArgs: fnArgs,
         }})
-        let result = runtime
+        # A failed install stays out of the rescue below, so it fails the call
+        # with its own error. An engine that builds prebuild first fails the
+        # call before it gets here.
+        let installed = runtime.sync rescue {
+          err: GraphQLError => raiseWithStderr(err)
+        }
+        let result = installed
           .withEnvVariable("DAGGER_CLIENT_VERSION", %clientVersion%)
           # The exec is cached on its own recipe, which holds neither the call's
           # arguments nor its cache policy; the engine's digest of the call does
@@ -311,15 +324,46 @@ final readonly class DangEntrypointRenderer
           .withExec(["php", "sdk/bin/dagger-module", "call", "--output", "/dagger/result.json"], stdin: request, experimentalPrivilegedNesting: true)
           .file("/dagger/result.json")
           .contents rescue {
-            # From v1.0.0-beta.27 an exec error's message carries only the exit code.
-            # Its extensions hold the stderr, capped by the engine at 100 KiB.
-            err: GraphQLError => {
-              let stderr = (JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? ""
-              if (stderr == "") { raise err }
-              raise stderr
-            }
+            err: GraphQLError => raiseFunctionError(err)
           }
         (result :: JSON!)
+      }
+
+      # An engine that gives the dispatcher a file for the function's error
+      # (DAGGER_FUNCTION_ERROR_PATH) puts the error the dispatcher wrote there
+      # in its exec's error, and fails the call with it, values and all: the
+      # exec's error is raised as it is. Otherwise, as with an older engine or
+      # a file the dispatcher couldn't write, the exec error carries the end of
+      # the dispatcher's stderr, where its last marker line holds the
+      # function's error; without one, the exec failed before the function
+      # returned, as when it exited by itself, and its own error is raised
+      # again, or, on an engine that marks no module process, its stderr.
+      let raiseFunctionError(err: GraphQLError!): String! {
+        let reported = ((JSON.decode(err.extensions) :: {{functionError: {{message: String, id: String}}}}).functionError != null) rescue false
+        if (reported) {
+          raise err
+        }
+        let marker = "::dagger-function-error::"
+        let stderr = ((JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? "") rescue ""
+        let lines = stderr.split("\n").filter { line => line.hasPrefix(marker) }
+        if (lines.isEmpty) {
+          raiseWithStderr(err)
+        }
+        raise ((JSON.decode(lines.takeLast(1).join("").trimPrefix(marker)) :: String!) rescue err.message)
+      }
+
+      # Raise a failed exec's error. An engine that marks the module process
+      # (the moduleProcess extension) shows an exec's logs with its error, so
+      # the error is raised as it is; an older engine shows only the exit
+      # code, so the end of the exec's stderr, which the engine caps at
+      # 100 KiB, is raised instead.
+      let raiseWithStderr(err: GraphQLError!): Container! {
+        let marked = ((JSON.decode(err.extensions) :: {{moduleProcess: Boolean}}).moduleProcess ?? false) rescue false
+        let stderr = ((JSON.decode(err.extensions) :: {{stderr: String}}).stderr ?? "") rescue ""
+        if (marked or stderr == "") {
+          raise err
+        }
+        raise stderr
       }
 
       let runtime: Container! {
