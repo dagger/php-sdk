@@ -2,7 +2,7 @@
 
 `src/`, `scripts/`, `tests/`, `composer.json`, `composer.lock`, `LICENSE`,
 `phpstan-baseline.neon` and `phpunit.xml.dist` come from `sdk/php` in dagger/dagger
-at `v1.0.0-beta.27`, commit `400b82d6f3c09ef096d2f59b3e920267b5969bf4`.
+at `v1.0.0-beta.30`, commit `0b5f50dad4e2a45d12538afff6facfe29d53b2dc`.
 
 Local changes to the vendored files:
 
