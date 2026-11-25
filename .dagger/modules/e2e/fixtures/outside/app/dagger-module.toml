@@ -1,5 +1,5 @@
 name = "outside-app"
-engineVersion = "v1.0.0-beta.27"
+engineVersion = "v1.0.0-beta.30"
 
 [runtime]
 source = "php"

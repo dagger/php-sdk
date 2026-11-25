@@ -80,7 +80,7 @@ type PhpSDK {
   The engine release this SDK generates for. The module's client schema, its
   DAGGER_CLIENT_VERSION and its dang.toml use this one value.
   """
-  let targetEngineVersion: String! = "v1.0.0-beta.27"
+  let targetEngineVersion: String! = "v1.0.0-beta.30"
 
   """
   The oldest engine this SDK runs on. An engine from the floor serves its own
