@@ -25,12 +25,14 @@ needs PHP 8.3 or later. Modules do not need the dev tooling, so their floor stay
 
 ## Engine requirement
 
-This module needs an engine from `v1.0.0-beta.27`, the release it generates
-modules for. On an older engine, `dagger generate` and `dagger module init` stop
-with a message that names the engine: upgrade the engine to generate. The engine
-resolves its built-in PHP runtime from `github.com/dagger/dagger/sdk/php`, not
-from this module, so a module on the built-in runtime still loads on an older
-engine, without this module generating it.
+This module needs an engine from `v1.0.0-beta.27`, the floor. It generates
+modules for `v1.0.0-beta.27`, the target. An engine from the floor to the target
+serves its own API view to a module generated for the target. On an engine below
+the floor, `dagger generate` and `dagger module init` stop with a message that
+names the engine: upgrade the engine to generate. The engine resolves its built-in
+PHP runtime from `github.com/dagger/dagger/sdk/php`, not from this module, so a
+module on the built-in runtime still loads on an older engine, without this module
+generating it.
 
 ## Install
 

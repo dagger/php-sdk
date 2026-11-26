@@ -77,11 +77,16 @@ type PhpSDK {
   }
 
   """
-  The engine release this SDK generates for, which is also the oldest engine it
-  runs on. The module's client schema, its DAGGER_CLIENT_VERSION and its
-  dang.toml use this one value.
+  The engine release this SDK generates for. The module's client schema, its
+  DAGGER_CLIENT_VERSION and its dang.toml use this one value.
   """
   let targetEngineVersion: String! = "v1.0.0-beta.27"
+
+  """
+  The oldest engine this SDK runs on. An engine from the floor serves its own
+  API view to code generated for targetEngineVersion.
+  """
+  let floorEngineVersion: String! = "v1.0.0-beta.27"
 
   """
   The template the `template` setting names, `default` when it is empty.
@@ -91,13 +96,18 @@ type PhpSDK {
   }
 
   """
-  Refuses an engine older than targetEngineVersion. Released engines compare
-  base versions, so the manifest's engineVersion does not keep an older v1.0.0
-  prerelease out. A dev build sorts after the releases it could be older than.
+  Whether the running engine is older than floorEngineVersion. Released engines
+  compare base versions, so the manifest's engineVersion does not keep an older
+  v1.0.0 prerelease out. A dev build sorts after the releases it could be older
+  than.
   """
+  pub belowEngineFloor: Boolean! {
+    releasePrecedes(version, floorEngineVersion)
+  }
+
   let checkEngine: Void {
-    if (releasePrecedes(version, targetEngineVersion)) {
-      raise "php-sdk needs an engine from " + targetEngineVersion + ", and this one is " + version + ": upgrade the engine"
+    if (belowEngineFloor) {
+      raise "php-sdk needs an engine from " + floorEngineVersion + ", and this one is " + version + ": upgrade the engine"
     }
     null
   }

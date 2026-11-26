@@ -18,6 +18,7 @@ type E2e {
   let programPath: String! = fixtureRoot + "/client-target/program"
   let interfacesPath: String! = fixtureRoot + "/interfaces"
   let target: String! = "v1.0.0-beta.27"
+  let floor: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
 
   let assert(condition: Boolean!, message: String!): Void {
@@ -836,6 +837,23 @@ type E2e {
         .withWorkdir(".")
         .directory("/" + layeringModulePath),
     )
+  }
+
+  """
+  Generation on the engine running this check, the only engine it uses: below
+  the floor it is refused, and from the floor a generated entrypoint and a module
+  that calls its clients answer calls. Run it on the floor release to hold the
+  floor.
+  """
+  pub engineFloorCheck(ws: Workspace!): Void @check {
+    let refused = generationError(ws)
+    if (phpSdk.belowEngineFloor) {
+      assertContains(refused, "php-sdk needs an engine from " + floor + ", and this one is " + version, "the SDK should refuse " + version)
+    } else {
+      assert(refused == "", "the SDK should accept " + version + ": " + refused)
+      generatedEntrypointCallCheck(ws)
+      unifiedClientCallCheck(ws)
+    }
   }
 
   """
