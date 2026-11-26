@@ -17,7 +17,8 @@ type E2e {
   let clientCallerPath: String! = fixtureRoot + "/client-target/caller"
   let programPath: String! = fixtureRoot + "/client-target/program"
   let interfacesPath: String! = fixtureRoot + "/interfaces"
-  let target: String! = "v1.0.0-beta.27"
+  let target: String! = "v1.0.0-beta.30"
+  let floor: String! = "v1.0.0-beta.27"
   let entrypointConfigPath: String! = entrypointModulePath + "/sdk/entrypoint/dang.toml"
 
   let assert(condition: Boolean!, message: String!): Void {
@@ -191,8 +192,8 @@ type E2e {
     assertNotContains(manifest, "[runtime]", "a new module should not keep the php runtime")
     assertContains(
       generated.file("sdk/entrypoint/dang.toml").contents,
-      "dagger = \"v1.0.0-beta.27\"",
-      "the entrypoint should declare v1.0.0-beta.27, past the identifier-casing cut",
+      "dagger = \"v1.0.0-beta.30\"",
+      "the entrypoint should declare v1.0.0-beta.30, past the identifier-casing cut",
     )
     assertContains(generated.file("sdk/LICENSE").contents, "Apache License", "the generated SDK should keep its own license")
     let moduleClass = generated.file("src/Layering.php").contents
@@ -337,7 +338,7 @@ type E2e {
     let itself = generationError(onTarget, clients: [lister, onTarget.moduleSource("/" + entrypointModulePath)])
     assertContains(itself, "declares itself as the client entrypoint-app", "a client of the scope's own module should be refused")
     let renamed = local
-      .withNewFile("/" + clientTargetPath + "/dagger-module.toml", "name = \"FileLister\"\nengineVersion = \"v1.0.0-beta.27\"\n\n[runtime]\n  source = \"dang\"\n")
+      .withNewFile("/" + clientTargetPath + "/dagger-module.toml", "name = \"FileLister\"\nengineVersion = \"v1.0.0-beta.30\"\n\n[runtime]\n  source = \"dang\"\n")
       .moduleSource("/" + clientTargetPath)
     assertContains(generationError(local, clients: [lister, renamed]), "has the clients file-lister and FileLister, which generate into one PHP namespace", "clients whose namespaces differ only in case should be refused")
     let acrossCut = local
@@ -606,7 +607,7 @@ type E2e {
     assertMoveRefused(
       ws.withNewFile("/" + manifest, several),
       "a module with several reasons",
-      "it has dependencies, and a direct generation does not know the clients of its scope, which provide them: run dagger generate; its engineVersion is later than v1.0.0-beta.27; it sets disableDefaultFunctionCaching; its source is php. See",
+      "it has dependencies, and a direct generation does not know the clients of its scope, which provide them: run dagger generate; its engineVersion is later than v1.0.0-beta.30; it sets disableDefaultFunctionCaching; its source is php. See",
     )
     let filtered = "include = [\"src\", \"composer.json\", \"!src/tmp\"]\nexclude = [\"notes\"]\n" + kept
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, filtered)), "a module with include and exclude patterns should be eligible")
@@ -644,7 +645,7 @@ type E2e {
     let initialized = generatedEntrypoint(ws.withoutFile("/" + manifest))
     assert(contentsOf(initialized, composer) == composerText, "a new module should keep its composer.json")
     assert(exists(initialized, dagPath) == false, "a new module with a composer.json should not get the global client")
-    assertMoveRefused(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", "v1.1.0")), "a module on an engine later than the target", "its engineVersion is later than v1.0.0-beta.27")
+    assertMoveRefused(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", "v1.1.0")), "a module on an engine later than the target", "its engineVersion is later than v1.0.0-beta.30")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, kept.replace("v1.0.0-beta.21", target))), "a module on the target engine should be eligible")
     assertMoveRefused(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = true\n" + kept), "a module without default function caching", "it sets disableDefaultFunctionCaching")
     assert(usesEntrypoint(ws.withNewFile("/" + manifest, "disableDefaultFunctionCaching = false\n" + kept)), "a module with default function caching should be eligible")
@@ -839,6 +840,23 @@ type E2e {
   }
 
   """
+  Generation on the engine running this check, the only engine it uses: below
+  the floor it is refused, and from the floor a generated entrypoint and a module
+  that calls its clients answer calls. Run it on the floor release to hold the
+  floor.
+  """
+  pub engineFloorCheck(ws: Workspace!): Void @check {
+    let refused = generationError(ws)
+    if (phpSdk.belowEngineFloor) {
+      assertContains(refused, "php-sdk needs an engine from " + floor + ", and this one is " + version, "the SDK should refuse " + version)
+    } else {
+      assert(refused == "", "the SDK should accept " + version + ": " + refused)
+      generatedEntrypointCallCheck(ws)
+      unifiedClientCallCheck(ws)
+    }
+  }
+
+  """
   The outside fixture with its path repository ../lib replaced by path.
   """
   let outsideWith(ws: Workspace!, path: String!): Workspace! {
@@ -889,7 +907,7 @@ type E2e {
       let kept = generatedEntrypoint(retained, path: outsideModulePath, name: "outside-app")
       let keptManifest = contentsOf(kept, manifest)
       assertContains(keptManifest, "[runtime]", "a runtime named beside the entrypoint should be kept")
-      assertContains(keptManifest, "engineVersion = \"v1.0.0-beta.27\"", "a runtime named beside the entrypoint should keep its engineVersion")
+      assertContains(keptManifest, "engineVersion = \"v1.0.0-beta.30\"", "a runtime named beside the entrypoint should keep its engineVersion")
       assert(keptManifest.containsMatch("\"\\.\\.\"[^\\]]*\"!notes\""), "include should list an ancestor Composer directory before the exclusions of " + patterns + ": " + keptManifest)
       assert(
         generatedEntrypoint(kept, path: outsideModulePath, name: "outside-app").changes(kept).isEmpty,

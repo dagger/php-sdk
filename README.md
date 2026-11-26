@@ -14,7 +14,7 @@ program; see [Module clients](#module-clients).
 The PHP library and codegen live under [`sdk/`](./sdk), vendored from
 dagger/dagger; [`sdk/VENDOR.md`](./sdk/VENDOR.md) records the commit. Generation
 writes them into each module with a client generated against
-`v1.0.0-beta.27`.
+`v1.0.0-beta.30`.
 
 ## PHP version
 
@@ -25,12 +25,14 @@ needs PHP 8.3 or later. Modules do not need the dev tooling, so their floor stay
 
 ## Engine requirement
 
-This module needs an engine from `v1.0.0-beta.27`, the release it generates
-modules for. On an older engine, `dagger generate` and `dagger module init` stop
-with a message that names the engine: upgrade the engine to generate. The engine
-resolves its built-in PHP runtime from `github.com/dagger/dagger/sdk/php`, not
-from this module, so a module on the built-in runtime still loads on an older
-engine, without this module generating it.
+This module needs an engine from `v1.0.0-beta.27`, the floor. It generates
+modules for `v1.0.0-beta.30`, the target. An engine from the floor to the target
+serves its own API view to a module generated for the target. On an engine below
+the floor, `dagger generate` and `dagger module init` stop with a message that
+names the engine: upgrade the engine to generate. The engine resolves its built-in
+PHP runtime from `github.com/dagger/dagger/sdk/php`, not from this module, so a
+module on the built-in runtime still loads on an older engine, without this module
+generating it.
 
 ## Install
 
@@ -182,7 +184,7 @@ so it is reported once the other reasons are fixed. Each reason comes with its f
   client add`.
 - `disableDefaultFunctionCaching = true`: remove it. The generated entrypoint
   caches every function by default, and no PHP attribute sets a cache policy.
-- an `engineVersion` later than `v1.0.0-beta.27`: set it to `v1.0.0-beta.27` or
+- an `engineVersion` later than `v1.0.0-beta.30`: set it to `v1.0.0-beta.30` or
   lower.
 - a `source` other than the module directory: move the module; see
   [Migrate from the built-in PHP runtime](#migrate-from-the-built-in-php-runtime).
@@ -252,7 +254,7 @@ too.
 
 A module with `[[dependencies]]` moves to the entrypoint when each dependency is a
 client of its scope; see [Module clients](#module-clients). In dagger/dagger
-v1.0.0-beta.27, `dagger module migrate` records a module's dependencies as the
+v1.0.0-beta.30, `dagger module migrate` records a module's dependencies as the
 clients of its scope (`core/workspace/migrate.go`, `MigratedModuleClients`).
 Generation drops `[[dependencies]]` from the manifest and generates each dependency
 as a client.
@@ -369,7 +371,7 @@ applies. Remove that rule yourself.
 ### dang.toml
 
 The SDK manages the Dagger version in `sdk/entrypoint/dang.toml`, and sets it to the
-version the module's client is generated against, `v1.0.0-beta.27`. Generation
+version the module's client is generated against, `v1.0.0-beta.30`. Generation
 replaces `dagger = true` or an older version on the `Dagger` import, requires
 `dang = "2.1"`, and keeps every other setting. Comments and formatting are lost, and
 keys are written in alphabetical order.
@@ -459,8 +461,8 @@ Generation fails, and applies none of its changes, in these cases:
 - A client module declares a release before the identifier-casing cut at
   `v1.0.0-beta.26`. The engine names the client module by the rules of the release
   it declares, whatever the API view of the session that calls it, and its client
-  uses the names of `v1.0.0-beta.27`. Set the client module's `engineVersion` to
-  `v1.0.0-beta.27`.
+  uses the names of `v1.0.0-beta.30`. Set the client module's `engineVersion` to
+  `v1.0.0-beta.30`.
 - A module function takes or returns a client's type. The message is in the
   generation's log; the error itself carries only the exit code.
 - A client module adds a field to a core type other than `Query`.
